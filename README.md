@@ -8,6 +8,61 @@ local (unpushed) commits — drawn on top of its nearest **public** (pushed) bas
 with relative timestamps, authors, and ref decorations, closely mirroring the
 output of Sapling's `sl`.
 
+## Example
+
+On a feature branch with a few local commits stacked on `origin/master`:
+
+```text
+$ git smartlog
+  @  23de132889  14 minutes ago  junz
+  │  Wire backoff into the HTTP client
+  │
+  o  a8d1958eb9  Today at 10:30  junz
+  │  Add exponential backoff with jitter
+  │
+  o  2d6999d80d  Today at 08:05  junz
+╭─╯  Extract retry policy into its own module
+│
+o  7582005a1c  Yesterday at 16:45  junz  origin/master
+│  Bump dependencies
+~
+```
+
+`@` marks `HEAD`; the indented `o` nodes above the bend (`╭─╯`) are your unpushed
+draft commits, newest first. Below the bend sits the public base — the nearest
+pushed commit, here `origin/master` — and `~` marks the truncated history beyond
+it.
+
+Widen the public window with `-n`. Public commits authored by *someone else*
+render metadata-only (no author, no subject), exactly as Sapling does — see
+`a7b65c2438` below:
+
+```text
+$ git smartlog -n 5
+  @  23de132889  14 minutes ago  junz
+  │  Wire backoff into the HTTP client
+  │
+  o  a8d1958eb9  Today at 10:30  junz
+  │  Add exponential backoff with jitter
+  │
+  o  2d6999d80d  Today at 08:05  junz
+╭─╯  Extract retry policy into its own module
+│
+o  7582005a1c  Yesterday at 16:45  junz  origin/master
+│  Bump dependencies
+│
+o  a7b65c2438  Yesterday at 09:30
+│
+│
+o  91eb0d1793  Wednesday at 14:20  junz
+│  Add config loader and defaults
+~
+```
+
+In a real terminal the output is colorized — draft hashes in bold yellow,
+`HEAD`'s line in magenta, remote refs in green. ANSI is suppressed when stdout
+isn't a TTY (as in these captures) or when `NO_COLOR` is set.
+
 ## Requirements
 
 - `zsh`

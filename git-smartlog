@@ -1,0 +1,401 @@
+#!/usr/bin/env zsh
+# Sapling-style smartlog using only git.
+#
+# Self-contained: depends only on zsh and git, so it can be downloaded and run
+# standalone — no other files from this repo are required.
+#
+# Differences from sapling's `sl`
+#   - Single stack only: renders the CURRENT HEAD's first-parent draft chain plus
+#     its public base. Sapling's smartlog renders EVERY draft branch as its own
+#     stack through a full DAG renderer (renderdag) ordered by an internal
+#     topo-sort; this script deliberately does not — other local branches and
+#     draft heads won't appear. Output matches `\sl` exactly when you're working a
+#     single branch (the common case).
+#   - Long subjects are shown in full; sapling truncates them to the terminal
+#     width with an ellipsis (so they match in a wide terminal, differ in a narrow
+#     one).
+#
+# Layout
+#   - Public base: the nearest public ancestor of HEAD. Candidate trunks are
+#     REMOTE-tracking refs only (origin/HEAD, upstream/HEAD, origin/main,
+#     origin/master, upstream/main, upstream/master); among those, the one whose
+#     merge-base with HEAD is closest to HEAD wins (mirrors sapling's "nearest
+#     public ancestor" and tolerates a stale fork remote). NOT @{u} or a local
+#     branch — a pushed feature branch's @{u}, or the local main/master you're
+#     sitting on, can equal HEAD and collapse the whole draft stack. @{u} then a
+#     local main/master are last-resort fallbacks when no remote trunk exists.
+#   - Drafts: first-parent commits in `HEAD ^merge_base`, newest first
+#   - Public window: -n commits starting at base_ref (or merge_base if base
+#     is ahead of HEAD's chain)
+#
+# Format per commit
+#   <symbol>  <hash:10>  <reltime>  <author>  [<refs>]
+#   │  <subject>
+#   │
+#   - Symbol: @ for HEAD, o otherwise
+#   - Author: %al (email local-part, e.g. "junz")
+#   - Refs: %D filtered to drop HEAD self-references
+#   - Last draft's subject line uses ╭─╯ instead of │ to bend into column 0
+#   - Final line is ~ (truncation indicator)
+#   - Compact public nodes: a public commit that is NOT HEAD and was authored by
+#     someone other than you renders metadata-only (no author, no subject line).
+#     Mirrors sapling's `sl_use_short_header`: short header iff
+#     `graphnode != @ && phase == public && username|email != author|email`.
+#     (Source: builtin_static/production.rs.) So your own public commits and the
+#     @ commit still show author + subject in full.
+#
+# Colors (ANSI; suppressed when stdout isn't a TTY or NO_COLOR is set)
+#   - Draft hash: bright-yellow + bold (\e[93;1m) — applies to ALL drafts
+#   - Public hash: yellow (\e[33m)
+#   - HEAD's time/author/subject: magenta (\e[35m)
+#   - Refs: green (\e[32m)
+#   - Symbols (@/o) and lines (│ ╭─╯): default
+#
+# Relative time — mirrors sapling's `smartdate(date, 5400, age, simpledate)`:
+#   - Elapsed <= 5400s (90 min): `age()` — walks scales year→second and uses the
+#     smallest where n>=2 (or seconds always); "1" is singularized.
+#     Boundaries: <120s → "N seconds ago"; <7200s → "N minutes ago" (n=2..119);
+#     etc. Smartlog only ever reaches the seconds/minutes tiers due to threshold.
+#   - Elapsed > 5400s (or future): `simpledate()` — uses CALENDAR-day diff
+#     (not elapsed seconds) to pick "Today" / "Yesterday" / "<Weekday>" /
+#     "<Mon> DD" / full date with HH:MM.
+# Source (paths in facebook/sapling): eden/scm/sapling/ext/smartlog.py (simpledate),
+#         eden/scm/sapling/templatefilters.py (age),
+#         eden/scm/lib/config/loader/src/builtin_static/production.rs (sl_date_threshold).
+#
+# Iteration
+#   `sl` is aliased to git-smartlog, so escape with `\sl` to invoke the real
+#   sapling binary. To validate, compare BOTH rendered text AND raw ANSI codes:
+#       diff <(\sl) <(git smartlog)
+#       diff <(\sl --color=always | cat -v) <(script -q /dev/null git-smartlog | cat -v)
+#   Sapling emits "[0;Nm" forms while this script uses "[Nm"; visually identical.
+
+zmodload zsh/datetime  # provides $EPOCHSECONDS and builtin strftime (no fork)
+
+PROG=${0:t}
+
+function die {
+    # Print an error message to stderr and exit.
+    print -ru2 -- "$PROG: $1"
+    exit 1
+}
+
+function usage {
+    print -r -- "usage: $PROG [-n N] [--base REV]
+
+Sapling-style smartlog using only git: the current branch's draft stack
+drawn on top of its nearest public (pushed) base.
+
+  -n, --limit N   public commits to show, including the merge-base (default 1)
+      --base REV  override the public base (default: nearest remote trunk, e.g.
+                  origin/HEAD, origin/main, origin/master, upstream/main)
+  -h, --help      show this help and exit"
+}
+
+# Self-contained option parsing. zparseopts is a zsh builtin, so no libraries are
+# needed; -K keeps the ARG_LIMIT default when -n is not passed.
+ARG_LIMIT=(1)
+ARG_BASE=()
+ARG_HELP=()
+zparseopts -D -E -K -- \
+    {n,-limit}:=ARG_LIMIT \
+    -base:=ARG_BASE \
+    {h,-help}=ARG_HELP \
+    || { usage >&2; exit 2; }
+
+(( ${#ARG_HELP} )) && { usage; exit 0; }
+
+function resolve_base {
+    local arg=$1
+    if [[ -n $arg ]]; then
+        git rev-parse --verify "$arg" >/dev/null 2>&1 || return 1
+        print -r -- "$arg"
+        return 0
+    fi
+    # Candidate trunks are REMOTE-tracking refs only: "public" commits come from
+    # what's been pushed, never from a local branch. A local main/master — or the
+    # branch you're on — can sit at or ahead of HEAD, which would make its
+    # merge-base with HEAD == HEAD and collapse the whole draft stack.
+    # <remote>/HEAD resolves to e.g. origin/master, so normalize via --abbrev-ref.
+    local -a candidates
+    local ref
+    for ref in origin/HEAD upstream/HEAD \
+               origin/main origin/master upstream/main upstream/master; do
+        git rev-parse --verify "$ref" >/dev/null 2>&1 || continue
+        candidates+=("$(git rev-parse --abbrev-ref "$ref")")
+    done
+    candidates=(${(u)candidates})
+
+    # Among candidates, pick the one whose merge-base with HEAD is closest to HEAD
+    # (i.e. the most recent common ancestor) — the nearest public ancestor. This
+    # tolerates a stale fork remote (e.g. origin/master behind upstream/main).
+    local best= best_mb= mb
+    for ref in $candidates; do
+        mb=$(git merge-base HEAD "$ref" 2>/dev/null) || continue
+        if [[ -z $best ]] || git merge-base --is-ancestor "$best_mb" "$mb"; then
+            best=$ref
+            best_mb=$mb
+        fi
+    done
+    if [[ -n $best ]]; then
+        print -r -- "$best"
+        return 0
+    fi
+
+    # Fallbacks for a repo with no remote trunk (local-only, or non-standard
+    # setup): the current branch's upstream, then a local main/master.
+    local upstream
+    if upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null); then
+        print -r -- "$upstream"
+        return 0
+    fi
+    for ref in main master; do
+        if git rev-parse --verify "$ref" >/dev/null 2>&1; then
+            print -r -- "$ref"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Globals set once in main() to avoid per-commit recomputation.
+typeset -g NOW TODAY_MIDNIGHT CURRENT_YEAR
+
+# Helpers set REPLY instead of printing — avoids a $(...) subshell per call.
+
+function age {
+    # Mirrors sapling's `age` templatefilter: walks scales year→second, uses the
+    # smallest where n>=2 (or seconds as fallback). Singularizes when n==1.
+    local delta=$1
+    (( delta < 1 )) && delta=1
+    local scales=(31536000 2592000 604800 86400 3600 60 1)
+    local names=(year month week day hour minute second)
+    local i n unit
+    for i in {1..7}; do
+        n=$((delta / scales[i]))
+        if (( n >= 2 || scales[i] == 1 )); then
+            unit=${names[i]}
+            (( n != 1 )) && unit="${unit}s"
+            REPLY="${n} ${unit} ago"
+            return
+        fi
+    done
+}
+
+function simpledate {
+    # Mirrors sapling's `simpledate` templatefunc. Uses calendar-day diff, not
+    # elapsed seconds, so 23:50 yesterday is "Yesterday" even when 20 min ago.
+    local epoch=$1
+    local hm
+    strftime -s hm '%H:%M' $epoch
+
+    if (( epoch > NOW )); then
+        strftime -s REPLY '%Y-%m-%d %H:%M' $epoch
+        return
+    fi
+
+    local commit_date commit_midnight td_days
+    strftime -s commit_date '%Y-%m-%d' $epoch
+    strftime -rs commit_midnight '%Y-%m-%d %H:%M:%S' "$commit_date 00:00:00"
+    td_days=$(( (TODAY_MIDNIGHT - commit_midnight) / 86400 ))
+
+    if (( td_days == 0 )); then
+        REPLY="Today at ${hm}"
+    elif (( td_days == 1 )); then
+        REPLY="Yesterday at ${hm}"
+    elif (( td_days <= 6 )); then
+        local weekday
+        strftime -s weekday '%A' $epoch
+        REPLY="${weekday} at ${hm}"
+    else
+        local commit_year
+        strftime -s commit_year '%Y' $epoch
+        if [[ $commit_year == $CURRENT_YEAR ]] || (( td_days <= 90 )); then
+            local md
+            strftime -s md '%b %d' $epoch
+            REPLY="${md} at ${hm}"
+        else
+            strftime -s REPLY '%Y-%m-%d %H:%M' $epoch
+        fi
+    fi
+}
+
+function reltime {
+    # Mirrors sapling's smartlog template: smartdate(date, 5400, age, simpledate).
+    local epoch=$1
+    local diff=$((NOW - epoch))
+    if (( diff >= 0 && diff <= 5400 )); then
+        age $diff
+    else
+        simpledate $epoch
+    fi
+}
+
+function filter_refs {
+    # Operates on %D from `git log --decorate=full`, so every ref is a full path:
+    #   "HEAD -> refs/heads/feat, refs/remotes/origin/feat, refs/tags/v1, ..."
+    # Mirror sapling's `sl_books`, which shows only remote bookmarks: hide HEAD,
+    # every <remote>/HEAD, local branches (refs/heads/*) and tags (smartlog's
+    # header has no tag component). sapling's namespace `names()` returns the list
+    # sorted, so sort alphabetically; join with a single space.
+    local raw=$1
+    REPLY=
+    [[ -z $raw ]] && return
+    local -a out
+    local r
+    for r in ${(@s:, :)raw}; do
+        case $r in
+            HEAD|"HEAD -> "*) ;;                            # current-branch self-refs
+            */HEAD) ;;                                      # remote default-branch pointer
+            refs/heads/*) ;;                                # local branch — sapling hides these
+            refs/tags/*) ;;                                 # tag — smartlog doesn't show tags
+            refs/remotes/*) out+=("${r#refs/remotes/}") ;;  # remote bookmark → origin/master
+            *) out+=("$r") ;;
+        esac
+    done
+    out=(${(o)out})
+    REPLY="${(j: :)out}"
+}
+
+function main {
+    NOW=$EPOCHSECONDS
+    local today
+    strftime -s today '%Y-%m-%d' $NOW
+    strftime -rs TODAY_MIDNIGHT '%Y-%m-%d %H:%M:%S' "$today 00:00:00"
+    strftime -s CURRENT_YEAR '%Y' $NOW
+
+    # For sapling's compact-public-node rule: a public, non-HEAD commit authored
+    # by someone else renders metadata-only. Compared against the configured user.
+    local my_email
+    my_email=$(git config user.email 2>/dev/null)
+
+    local limit=${ARG_LIMIT[-1]}
+    local base_arg=
+    (( ${#ARG_BASE} > 0 )) && base_arg=${ARG_BASE[-1]}
+
+    local base_ref
+    if [[ -n $base_arg ]]; then
+        base_ref=$(resolve_base "$base_arg") ||
+            die "Cannot resolve --base $base_arg"
+    else
+        base_ref=$(resolve_base "") ||
+            die "Cannot find a public base ref (no remote trunk, @{u}, or local main/master)"
+    fi
+
+    local head_sha
+    head_sha=$(git rev-parse HEAD 2>/dev/null) ||
+        die "HEAD is not a valid commit"
+
+    local merge_base
+    merge_base=$(git merge-base HEAD "$base_ref" 2>/dev/null) ||
+        die "No merge-base between HEAD and $base_ref"
+
+    local -a drafts publics
+    if [[ $head_sha != $merge_base ]]; then
+        drafts=("${(@f)$(git rev-list --first-parent HEAD "^$merge_base")}")
+    fi
+    publics=("${(@f)$(git rev-list --first-parent "$base_ref" -n $limit)}")
+    # If base_ref is ahead of HEAD's branch, anchor public column at merge_base instead.
+    if [[ ${publics[(Ie)$merge_base]} -eq 0 ]]; then
+        publics=("${(@f)$(git rev-list --first-parent "$merge_base" -n $limit)}")
+    fi
+
+    local C_PUBLIC_HASH= C_DRAFT_HASH= C_HEAD_TEXT= C_REF= C_RESET=
+    if [[ -t 1 && -z $NO_COLOR ]]; then
+        C_PUBLIC_HASH=$'\e[33m'
+        C_DRAFT_HASH=$'\e[93;1m'
+        C_HEAD_TEXT=$'\e[35m'
+        C_REF=$'\e[32m'
+        C_RESET=$'\e[0m'
+    fi
+
+    local -a all_shas
+    all_shas=("${drafts[@]}" "${publics[@]}")
+    (( ${#all_shas} == 0 )) && die "Nothing to display"
+
+    local commit_data
+    commit_data=$(git log --no-walk=unsorted --abbrev=10 --decorate=full \
+        --pretty=format:'%h%x1f%at%x1f%al%x1f%ae%x1f%D%x1f%s' "${all_shas[@]}")
+
+    local -a hashes epochs authors author_emails refs subjects
+    local h e a ae r s
+    while IFS=$'\x1f' read -r h e a ae r s; do
+        [[ -z $h ]] && continue
+        hashes+=("$h")
+        epochs+=("$e")
+        authors+=("$a")
+        author_emails+=("$ae")
+        refs+=("$r")
+        subjects+=("$s")
+    done <<< "$commit_data"
+
+    local n_drafts=${#drafts}
+    local total=$((n_drafts + ${#publics}))
+
+    local i
+    for ((i=1; i<=total; i++)); do
+        local sha=${all_shas[$i]}
+        local hash=${hashes[$i]}
+        local epoch=${epochs[$i]}
+        local author=${authors[$i]}
+        local author_email=${author_emails[$i]}
+        local refs_raw=${refs[$i]}
+        local subject=${subjects[$i]}
+
+        local is_draft=0 is_last_draft=0 is_last_public=0
+        (( i <= n_drafts )) && is_draft=1
+        (( i == n_drafts && n_drafts > 0 )) && is_last_draft=1
+        (( i == total )) && is_last_public=1
+
+        local symbol=o
+        local hash_color=$C_PUBLIC_HASH
+        local text_color=
+        (( is_draft )) && hash_color=$C_DRAFT_HASH
+        local is_head=0
+        if [[ $sha == $head_sha ]]; then
+            symbol=@
+            text_color=$C_HEAD_TEXT
+            is_head=1
+        fi
+
+        # Compact public node: public (not a draft), not HEAD, authored by someone
+        # else → metadata-only (no author, no subject). See header.
+        local is_compact=0
+        if (( ! is_draft && ! is_head )) && [[ $author_email != $my_email ]]; then
+            is_compact=1
+        fi
+
+        reltime $epoch
+        local time_str=$REPLY
+        filter_refs "$refs_raw"
+        local refs_clean=$REPLY
+        local ref_display=
+        [[ -n $refs_clean ]] && ref_display="  ${C_REF}${refs_clean}${C_RESET}"
+
+        local indent=
+        (( is_draft )) && indent="  "
+
+        local text_reset=
+        [[ -n $text_color ]] && text_reset=$C_RESET
+
+        local author_seg="  ${author}"
+        (( is_compact )) && author_seg=
+        local subject_body="  ${text_color}${subject}${text_reset}"
+        (( is_compact )) && subject_body=
+
+        print -r -- "${indent}${symbol}  ${hash_color}${hash}${C_RESET}${text_color}  ${time_str}${author_seg}${text_reset}${ref_display}"
+
+        if (( is_last_draft )); then
+            print -r -- "╭─╯${subject_body}"
+            print -r -- "│"
+        elif (( is_last_public )); then
+            print -r -- "${indent}│${subject_body}"
+            print -r -- "~"
+        else
+            print -r -- "${indent}│${subject_body}"
+            print -r -- "${indent}│"
+        fi
+    done
+}
+
+main

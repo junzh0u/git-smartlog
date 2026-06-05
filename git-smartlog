@@ -33,6 +33,12 @@
 #   │  <subject>
 #   │
 #   - Symbol: @ for HEAD, o otherwise
+#   - Uncommitted changes: when the working tree is dirty, a synthetic
+#     "Uncommitted changes" node is drawn on top of HEAD. Its header carries compact
+#     totals ("2 files, +69 -2", untracked files included); its body is the per-file
+#     bars from `git diff --stat HEAD` (the stat's own trailing total is dropped,
+#     since it lives in the header). The @ marker moves to it — that's where the
+#     working copy is — and HEAD drops to o (but keeps its author/subject).
 #   - Author: %al (email local-part, e.g. "junz")
 #   - Refs: %D filtered to drop HEAD self-references
 #   - Last draft's subject line uses ╭─╯ instead of │ to bend into column 0
@@ -290,6 +296,32 @@ function main {
     merge_base=$(git merge-base HEAD "$base_ref" 2>/dev/null) ||
         die "No merge-base between HEAD and $base_ref"
 
+    # Working-directory changes render as a synthetic "Uncommitted changes" draft
+    # node on top of HEAD; the @ marker moves there, since that's where the working
+    # copy actually is. Capture status once and summarize file/line counts.
+    local porcelain
+    porcelain=$(git status --porcelain 2>/dev/null)
+    local has_changes=0 wdir_summary=
+    local -a wdir_stat
+    if [[ -n $porcelain ]]; then
+        has_changes=1
+        # Compact totals for the header line (counts untracked files too).
+        local -a status_lines=("${(@f)porcelain}")
+        local n_files=${#status_lines} file_word=files
+        (( n_files == 1 )) && file_word=file
+        local shortstat ins=0 del=0
+        shortstat=$(git diff --shortstat HEAD 2>/dev/null)
+        [[ $shortstat =~ '([0-9]+) insertion' ]] && ins=$match[1]
+        [[ $shortstat =~ '([0-9]+) deletion' ]] && del=$match[1]
+        wdir_summary="${n_files} ${file_word}"
+        (( ins > 0 || del > 0 )) && wdir_summary+=", +${ins} -${del}"
+        # Per-file body from `git diff --stat HEAD`, minus its trailing summary line
+        # (those totals already sit in the header). Captured via $(...) so git uses
+        # its stable non-TTY default width regardless of the caller's terminal.
+        wdir_stat=("${(@f)$(git diff --stat HEAD 2>/dev/null)}")
+        (( ${#wdir_stat} > 0 )) && wdir_stat=("${(@)wdir_stat[1,-2]}")
+    fi
+
     local -a drafts publics
     if [[ $head_sha != $merge_base ]]; then
         drafts=("${(@f)$(git rev-list --first-parent HEAD "^$merge_base")}")
@@ -332,6 +364,25 @@ function main {
     local n_drafts=${#drafts}
     local total=$((n_drafts + ${#publics}))
 
+    # Synthetic wdir node, drawn above the stack: @ marker, draft-colored label, the
+    # change summary in HEAD-text color. It connects straight down into the draft
+    # column when HEAD is a draft, otherwise it bends (╭─╯) into the public column.
+    if (( has_changes )); then
+        local wdir_text_reset=
+        [[ -n $C_HEAD_TEXT ]] && wdir_text_reset=$C_RESET
+        print -r -- "  @  ${C_DRAFT_HASH}Uncommitted changes${C_RESET}${C_HEAD_TEXT}  ${wdir_summary}${wdir_text_reset}"
+        local stat_line
+        for stat_line in $wdir_stat; do
+            print -r -- "  │${stat_line}"
+        done
+        if (( n_drafts > 0 )); then
+            print -r -- "  │"
+        else
+            print -r -- "╭─╯"
+            print -r -- "│"
+        fi
+    fi
+
     local i
     for ((i=1; i<=total; i++)); do
         local sha=${all_shas[$i]}
@@ -353,9 +404,14 @@ function main {
         (( is_draft )) && hash_color=$C_DRAFT_HASH
         local is_head=0
         if [[ $sha == $head_sha ]]; then
-            symbol=@
-            text_color=$C_HEAD_TEXT
             is_head=1
+            # With uncommitted changes the @ marker belongs to the wdir node above;
+            # HEAD stays a normal node (but is_head still forces a full, non-compact
+            # header so its author/subject keep showing).
+            if (( ! has_changes )); then
+                symbol=@
+                text_color=$C_HEAD_TEXT
+            fi
         fi
 
         # Compact public node: public (not a draft), not HEAD, authored by someone

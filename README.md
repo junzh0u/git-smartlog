@@ -6,7 +6,8 @@ self-contained zsh script.
 It renders the current branch's **draft stack** — the first-parent chain of your
 local (unpushed) commits — drawn on top of its nearest **public** (pushed) base,
 with relative timestamps, authors, and ref decorations, closely mirroring the
-output of Sapling's `sl`.
+output of Sapling's `sl` (the opt-in `-u` mode adds an uncommitted-changes node
+that intentionally departs from that mirror — see below).
 
 ## Example
 
@@ -63,7 +64,8 @@ With `-u` / `--uncommitted`, a synthetic **Uncommitted changes** node is drawn o
 top of `HEAD` whenever the working tree is dirty: compact totals in the header,
 per-file `git diff --stat HEAD` bars in the body. The `@` marker moves to it —
 that's where the working copy is — and `HEAD` drops to an `o` (keeping its author
-and subject):
+and subject). This is a git-smartlog extension with no Sapling equivalent, so the
+output no longer mirrors `sl` (see [Differences](#differences-from-saplings-sl)):
 
 ```text
 $ git smartlog -u
@@ -149,6 +151,10 @@ usage: git-smartlog [-u] [-n N] [--base REV]
   single branch (the common case).
 - **Long subjects shown in full.** Sapling truncates them to the terminal width
   with an ellipsis.
+- **`-u` is an extension, not a mirror.** The default output tracks Sapling's `sl`
+  closely, but the `-u`/`--uncommitted` node (with its `git diff --stat` body) has
+  no Sapling equivalent — Sapling surfaces working-copy changes differently. Treat
+  `-u` as a git-smartlog-only convenience, not a parity feature.
 
 ## License
 

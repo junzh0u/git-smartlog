@@ -33,8 +33,9 @@
 #   │  <subject>
 #   │
 #   - Symbol: @ for HEAD, o otherwise
-#   - Uncommitted changes: when the working tree is dirty, a synthetic
-#     "Uncommitted changes" node is drawn on top of HEAD. Its header carries compact
+#   - Uncommitted changes (opt-in via -u/--uncommitted): when the working tree is
+#     dirty, a synthetic "Uncommitted changes" node is drawn on top of HEAD. Its
+#     header carries compact
 #     totals ("2 files, +69 -2", untracked files included); its body is the per-file
 #     bars from `git diff --stat HEAD` (the stat's own trailing total is dropped,
 #     since it lives in the header). The @ marker moves to it — that's where the
@@ -87,15 +88,16 @@ function die {
 }
 
 function usage {
-    print -r -- "usage: $PROG [-n N] [--base REV]
+    print -r -- "usage: $PROG [-u] [-n N] [--base REV]
 
 Sapling-style smartlog using only git: the current branch's draft stack
 drawn on top of its nearest public (pushed) base.
 
-  -n, --limit N   public commits to show, including the merge-base (default 1)
-      --base REV  override the public base (default: nearest remote trunk, e.g.
-                  origin/HEAD, origin/main, origin/master, upstream/main)
-  -h, --help      show this help and exit"
+  -u, --uncommitted   show a synthetic node for uncommitted working-tree changes
+  -n, --limit N       public commits to show, including the merge-base (default 1)
+      --base REV      override the public base (default: nearest remote trunk, e.g.
+                      origin/HEAD, origin/main, origin/master, upstream/main)
+  -h, --help          show this help and exit"
 }
 
 # Self-contained option parsing. zparseopts is a zsh builtin, so no libraries are
@@ -103,9 +105,11 @@ drawn on top of its nearest public (pushed) base.
 ARG_LIMIT=(1)
 ARG_BASE=()
 ARG_HELP=()
+ARG_UNCOMMITTED=()
 zparseopts -D -E -K -- \
     {n,-limit}:=ARG_LIMIT \
     -base:=ARG_BASE \
+    {u,-uncommitted}=ARG_UNCOMMITTED \
     {h,-help}=ARG_HELP \
     || { usage >&2; exit 2; }
 
@@ -299,10 +303,10 @@ function main {
     # Working-directory changes render as a synthetic "Uncommitted changes" draft
     # node on top of HEAD; the @ marker moves there, since that's where the working
     # copy actually is. Capture status once and summarize file/line counts.
-    local porcelain
-    porcelain=$(git status --porcelain 2>/dev/null)
     local has_changes=0 wdir_summary=
     local -a wdir_stat
+    local porcelain=
+    (( ${#ARG_UNCOMMITTED} )) && porcelain=$(git status --porcelain 2>/dev/null)
     if [[ -n $porcelain ]]; then
         has_changes=1
         # Compact totals for the header line (counts untracked files too).
@@ -317,8 +321,12 @@ function main {
         (( ins > 0 || del > 0 )) && wdir_summary+=", +${ins} -${del}"
         # Per-file body from `git diff --stat HEAD`, minus its trailing summary line
         # (those totals already sit in the header). Captured via $(...) so git uses
-        # its stable non-TTY default width regardless of the caller's terminal.
-        wdir_stat=("${(@f)$(git diff --stat HEAD 2>/dev/null)}")
+        # its stable non-TTY default width regardless of the caller's terminal —
+        # which also strips its color, so force it back on when we're rendering in
+        # color (matching the same TTY/NO_COLOR test as the C_* palette below).
+        local stat_color=--color=never
+        [[ -t 1 && -z $NO_COLOR ]] && stat_color=--color=always
+        wdir_stat=("${(@f)$(git diff $stat_color --stat HEAD 2>/dev/null)}")
         (( ${#wdir_stat} > 0 )) && wdir_stat=("${(@)wdir_stat[1,-2]}")
     fi
 

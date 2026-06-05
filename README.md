@@ -59,13 +59,14 @@ o  91eb0d1793  Wednesday at 14:20  junz
 ~
 ```
 
-When the working tree is dirty, a synthetic **Uncommitted changes** node is drawn
-on top of `HEAD`: compact totals in the header, per-file `git diff --stat HEAD`
-bars in the body. The `@` marker moves to it — that's where the working copy is —
-and `HEAD` drops to an `o` (keeping its author and subject):
+With `-u` / `--uncommitted`, a synthetic **Uncommitted changes** node is drawn on
+top of `HEAD` whenever the working tree is dirty: compact totals in the header,
+per-file `git diff --stat HEAD` bars in the body. The `@` marker moves to it —
+that's where the working copy is — and `HEAD` drops to an `o` (keeping its author
+and subject):
 
 ```text
-$ git smartlog
+$ git smartlog -u
   @  Uncommitted changes  2 files, +26 -4
   │ http_client.go | 18 ++++++++++++++----
   │ retry.go       | 12 ++++++++++++
@@ -111,12 +112,13 @@ git config --global alias.sl smartlog
 ## Usage
 
 ```
-usage: git-smartlog [-n N] [--base REV]
+usage: git-smartlog [-u] [-n N] [--base REV]
 
-  -n, --limit N   public commits to show, including the merge-base (default 1)
-      --base REV  override the public base (default: nearest remote trunk, e.g.
-                  origin/HEAD, origin/main, origin/master, upstream/main)
-  -h, --help      show this help and exit
+  -u, --uncommitted   show a synthetic node for uncommitted working-tree changes
+  -n, --limit N       public commits to show, including the merge-base (default 1)
+      --base REV      override the public base (default: nearest remote trunk, e.g.
+                      origin/HEAD, origin/main, origin/master, upstream/main)
+  -h, --help          show this help and exit
 ```
 
 ## How it works
@@ -127,10 +129,10 @@ usage: git-smartlog [-n N] [--base REV]
   merge-base with `HEAD` is closest to `HEAD` wins. `@{u}` and a local
   `main`/`master` are last-resort fallbacks when no remote trunk exists.
 - **Drafts** — first-parent commits in `HEAD ^base`, newest first.
-- **Uncommitted changes** — when `git status` is non-empty, a synthetic node on
-  top of `HEAD`: compact totals in the header (`git diff --shortstat` plus the
-  untracked-file count), per-file `git diff --stat HEAD` bars in the body; the `@`
-  marker moves there.
+- **Uncommitted changes** — with `-u`/`--uncommitted`, when `git status` is
+  non-empty, a synthetic node on top of `HEAD`: compact totals in the header
+  (`git diff --shortstat` plus the untracked-file count), per-file
+  `git diff --stat HEAD` bars in the body; the `@` marker moves there.
 - **Public window** — `-n` commits starting at the base.
 - **Relative time** — mirrors Sapling's `smartdate`: `age()` ("N minutes ago")
   within 90 minutes, calendar-day `simpledate()` ("Yesterday", "Mon DD", …)

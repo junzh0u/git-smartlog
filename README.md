@@ -9,6 +9,10 @@ with relative timestamps, authors, and ref decorations, closely mirroring the
 output of Sapling's `sl` (the opt-in `-u` mode adds an uncommitted-changes node
 that intentionally departs from that mirror — see below).
 
+<p align="center">
+  <img src="cover.png" alt="git-smartlog -u -n 2 output" width="600">
+</p>
+
 ## Example
 
 On a feature branch with a few local commits stacked on `origin/master`:

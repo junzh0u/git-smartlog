@@ -41,7 +41,10 @@
 #     since it lives in the header). The @ marker moves to it — that's where the
 #     working copy is — and HEAD drops to o (but keeps its author/subject).
 #   - Author: %al (email local-part, e.g. "junz")
-#   - Refs: %D filtered to drop HEAD self-references
+#   - Refs: %D filtered to remote bookmarks plus the active local branch, shown
+#     with a trailing "*" like sapling's active bookmark — but only when no remote
+#     branch of the same name exists (else just the remote shows, e.g. master ->
+#     origin/master); inactive local branches and tags are dropped
 #   - Last draft's subject line uses ╭─╯ instead of │ to bend into column 0
 #   - Final line is ~ (truncation indicator)
 #   - Compact public nodes: a public commit that is NOT HEAD and was authored by
@@ -55,7 +58,9 @@
 #   - Draft hash: bright-yellow + bold (\e[93;1m) — applies to ALL drafts
 #   - Public hash: yellow (\e[33m)
 #   - HEAD's time/author/subject: magenta (\e[35m)
-#   - Refs: green (\e[32m)
+#   - Refs: remote bookmarks green (\e[32m); the active local branch (name*) yellow
+#     (\e[33m). Mirrors sapling's [color] defaults sl.remote=green, sl.active=yellow
+#     (builtin_static/production.rs)
 #   - Symbols (@/o) and lines (│ ╭─╯): default
 #
 # Relative time — mirrors sapling's `smartdate(date, 5400, age, simpledate)`:
@@ -169,7 +174,7 @@ function resolve_base {
 }
 
 # Globals set once in main() to avoid per-commit recomputation.
-typeset -g NOW TODAY_MIDNIGHT CURRENT_YEAR
+typeset -g NOW TODAY_MIDNIGHT CURRENT_YEAR ACTIVE_BRANCH
 
 # Helpers set REPLY instead of printing — avoids a $(...) subshell per call.
 
@@ -244,10 +249,12 @@ function reltime {
 function filter_refs {
     # Operates on %D from `git log --decorate=full`, so every ref is a full path:
     #   "HEAD -> refs/heads/feat, refs/remotes/origin/feat, refs/tags/v1, ..."
-    # Mirror sapling's `sl_books`, which shows only remote bookmarks: hide HEAD,
-    # every <remote>/HEAD, local branches (refs/heads/*) and tags (smartlog's
-    # header has no tag component). sapling's namespace `names()` returns the list
-    # sorted, so sort alphabetically; join with a single space.
+    # Mirror what sapling shows: remote bookmarks (refs/remotes/*) plus the active
+    # local branch as $ACTIVE_BRANCH ("name*"), precomputed in main(). Inactive
+    # local branches and tags are hidden, as is the active branch when a remote of
+    # the same name exists (sapling shows only the remote bookmark — e.g. `master`
+    # yields just `origin/master`, never `master*`). sapling sorts names, so sort
+    # alphabetically; join with a single space.
     local raw=$1
     REPLY=
     [[ -z $raw ]] && return
@@ -255,9 +262,11 @@ function filter_refs {
     local r
     for r in ${(@s:, :)raw}; do
         case $r in
-            HEAD|"HEAD -> "*) ;;                            # current-branch self-refs
+            "HEAD -> "*)                                    # active branch (HEAD's)
+                [[ -n $ACTIVE_BRANCH ]] && out+=("$ACTIVE_BRANCH") ;;
+            HEAD) ;;                                        # detached-HEAD self-ref
             */HEAD) ;;                                      # remote default-branch pointer
-            refs/heads/*) ;;                                # local branch — sapling hides these
+            refs/heads/*) ;;                                # inactive local branch — hidden
             refs/tags/*) ;;                                 # tag — smartlog doesn't show tags
             refs/remotes/*) out+=("${r#refs/remotes/}") ;;  # remote bookmark → origin/master
             *) out+=("$r") ;;
@@ -278,6 +287,18 @@ function main {
     # by someone else renders metadata-only. Compared against the configured user.
     local my_email
     my_email=$(git config user.email 2>/dev/null)
+
+    # The active local branch (HEAD's) is shown with a trailing "*", like sapling's
+    # active bookmark — but only when no remote branch of the same name exists. If
+    # one does, sapling shows just the remote bookmark (e.g. on `master`, only
+    # origin/master appears, never master*). Detached HEAD has no active branch.
+    ACTIVE_BRANCH=
+    local cur_branch
+    cur_branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null)
+    if [[ -n $cur_branch ]] &&
+       [[ -z $(git for-each-ref --count=1 --format=x "refs/remotes/*/${cur_branch}" 2>/dev/null) ]]; then
+        ACTIVE_BRANCH="${cur_branch}*"
+    fi
 
     local limit=${ARG_LIMIT[-1]}
     local base_arg=
@@ -340,12 +361,13 @@ function main {
         publics=("${(@f)$(git rev-list --first-parent "$merge_base" -n $limit)}")
     fi
 
-    local C_PUBLIC_HASH= C_DRAFT_HASH= C_HEAD_TEXT= C_REF= C_RESET=
+    local C_PUBLIC_HASH= C_DRAFT_HASH= C_HEAD_TEXT= C_REF= C_BRANCH= C_RESET=
     if [[ -t 1 && -z $NO_COLOR ]]; then
         C_PUBLIC_HASH=$'\e[33m'
         C_DRAFT_HASH=$'\e[93;1m'
         C_HEAD_TEXT=$'\e[35m'
         C_REF=$'\e[32m'
+        C_BRANCH=$'\e[33m'
         C_RESET=$'\e[0m'
     fi
 
@@ -434,7 +456,24 @@ function main {
         filter_refs "$refs_raw"
         local refs_clean=$REPLY
         local ref_display=
-        [[ -n $refs_clean ]] && ref_display="  ${C_REF}${refs_clean}${C_RESET}"
+        if [[ -n $refs_clean ]]; then
+            # Color each ref by kind, matching sapling: the active local branch
+            # ($ACTIVE_BRANCH, the "name*" token) is yellow, remote bookmarks green.
+            # Quote the RHS so the trailing "*" is matched literally, not as a glob.
+            # Both locals MUST carry an assignment: a bare `local rt` / `local -a
+            # colored` re-run in the same function scope neither resets the prior
+            # iteration's value nor stays silent — zsh echoes the stale value.
+            local -a colored=()
+            local rt=
+            for rt in ${(s: :)refs_clean}; do
+                if [[ $rt == "$ACTIVE_BRANCH" ]]; then
+                    colored+=("${C_BRANCH}${rt}${C_RESET}")
+                else
+                    colored+=("${C_REF}${rt}${C_RESET}")
+                fi
+            done
+            ref_display="  ${(j: :)colored}"
+        fi
 
         local indent=
         (( is_draft )) && indent="  "

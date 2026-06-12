@@ -157,8 +157,10 @@ usage: git-smartlog [-u] [-n N] [--base REV]
   with an ellipsis.
 - **`-u` is an extension, not a mirror.** The default output tracks Sapling's `sl`
   closely, but the `-u`/`--uncommitted` node (with its `git diff --stat` body) has
-  no Sapling equivalent — Sapling surfaces working-copy changes differently. Treat
-  `-u` as a git-smartlog-only convenience, not a parity feature.
+  no Sapling equivalent — the idea is borrowed from [Jujutsu](https://github.com/jj-vcs/jj),
+  which treats the working copy as a commit in its own right; Sapling surfaces
+  working-copy changes differently. Treat `-u` as a git-smartlog-only convenience,
+  not a parity feature.
 
 ## License
 

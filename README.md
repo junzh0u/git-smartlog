@@ -9,6 +9,9 @@ with relative timestamps, authors, and ref decorations, closely mirroring the
 output of Sapling's `sl` (the opt-in `-u` mode adds an uncommitted-changes node
 that intentionally departs from that mirror — see below).
 
+The story behind it — and how the public base is found — is in
+[this post](https://junz.info/writing/git-smartlog/).
+
 <p align="center">
   <img src="cover.png" alt="git-smartlog -u -n 2 output" width="600">
 </p>

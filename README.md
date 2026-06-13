@@ -84,10 +84,10 @@ equivalent, so the output no longer mirrors `sl`
 ```text
 $ git smartlog -u
   @  Uncommitted changes  4 files, +20 -17
-  │ A config.yaml    |  5 +++++
-  │ M http_client.go | 18 ++++++++++++++----
-  │ D legacy_api.go  | 12 ------------
-  │ S vendor/sdk     |  2 +-
+  │  A config.yaml    |  5 +++++
+  │  M http_client.go | 18 ++++++++++++++----
+  │  D legacy_api.go  | 12 ------------
+  │  S vendor/sdk     |  2 +-
   │
   o  23de132889  14 minutes ago  junz
   │  Wire backoff into the HTTP client

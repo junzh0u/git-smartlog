@@ -556,9 +556,12 @@ function main {
         local wdir_text_reset=
         [[ -n $C_HEAD_TEXT ]] && wdir_text_reset=$C_RESET
         print -r -- "  @  ${C_DRAFT_HASH}Uncommitted changes${C_RESET}${C_HEAD_TEXT}  ${wdir_summary}${wdir_text_reset}"
+        # stat_line already starts with one space (git's --stat lead); add one more
+        # so the marker sits 2 cols past the │ spine, aligning with commit text
+        # (│  subject) and the node header (@  Uncommitted changes).
         local stat_line
         for stat_line in $wdir_stat; do
-            print -r -- "  │${stat_line}"
+            print -r -- "  │ ${stat_line}"
         done
         if (( n_drafts > 0 )); then
             print -r -- "  │"

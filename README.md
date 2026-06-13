@@ -73,20 +73,39 @@ top of `HEAD` whenever the working tree is dirty: compact totals in the header,
 per-file `git diff --stat HEAD` bars in the body. Untracked files are folded into
 both (as new-file additions) via a throwaway index overlay, so they appear without
 touching the real index. Each body filename is prefixed with a one-letter change
-marker (`A` added, `D` deleted, `M` modified, `R` renamed, `S` submodule) and both
-marker and name are color-coded by kind (new green, deleted red, submodule cyan,
-the rest default), on top of git's usual green/red `+`/`-` bars. The `@` marker
-moves to it — that's where the working copy is — and `HEAD` drops to an `o` (keeping
-its author and subject). This is a git-smartlog extension with no Sapling
-equivalent, so the output no longer mirrors `sl`
-(see [Differences](#differences-from-saplings-sl)):
+marker, and both marker and name are color-coded by kind, on top of git's usual
+green/red `+`/`-` bars:
+
+| marker | meaning | color |
+| :-: | --- | --- |
+| `A` | added (staged) | green |
+| `?` | untracked | dim green |
+| `M` | modified | default |
+| `D` | deleted | red |
+| `R` | renamed | blue |
+| `T` | typechange (file↔symlink) | magenta |
+| `S` | submodule | cyan |
+| `U` | unmerged (conflict) | bold red |
+
+A pure executable-bit flip (`chmod`), which `--stat` renders as `| 0`, gets a
+trailing `+x`/`-x` hint. The `@` marker moves to the node — that's where the working
+copy is — and `HEAD` drops to an `o` (keeping its author and subject). This is a
+git-smartlog extension with no Sapling equivalent, so the output no longer mirrors
+`sl` (see [Differences](#differences-from-saplings-sl)):
 
 ```text
 $ git smartlog -u -n 2
-  @  Uncommitted changes  3 files, +17 -2
-  │  M http_client.go | 2 +-
-  │  M retry.go       | 8 +++++++-
-  │  A retry_test.go  | 9 +++++++++
+  @  Uncommitted changes  10 files, +30 -13
+  │  T config.json          | 5 +----
+  │  M http_client.go       | 2 +-
+  │  D legacy.go            | 6 ------
+  │  R logging.go => log.go | 0
+  │  A metrics.go           | 7 +++++++
+  │  M retry.go             | 8 +++++++-
+  │  ? retry_test.go        | 9 +++++++++
+  │  M scripts/release.sh   | 0 +x
+  │  S vendor/timeutil      | 2 +-
+  │  U version.go           | 4 ++++
   │
   o  b82a2561e9  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
@@ -167,10 +186,17 @@ usage: git-smartstat [--color WHEN]
 
 ```text
 $ git smartstat
-3 files, +17 -2
- M http_client.go | 2 +-
- M retry.go       | 8 +++++++-
- A retry_test.go  | 9 +++++++++
+10 files, +30 -13
+ T config.json          | 5 +----
+ M http_client.go       | 2 +-
+ D legacy.go            | 6 ------
+ R logging.go => log.go | 0
+ A metrics.go           | 7 +++++++
+ M retry.go             | 8 +++++++-
+ ? retry_test.go        | 9 +++++++++
+ M scripts/release.sh   | 0 +x
+ S vendor/timeutil      | 2 +-
+ U version.go           | 4 ++++
 ```
 
 It prints nothing when the working tree is clean. Both names share one in-file
@@ -192,8 +218,9 @@ empty tree so staged and untracked files still show as additions.)
   (`git diff --shortstat`) and per-file `git diff --stat HEAD` bars in the body,
   both computed against a throwaway index overlay that intent-to-adds untracked
   files so they're folded in without mutating the repo. Each body filename gets a
-  one-letter change marker (`A`/`D`/`M`/`R`/`S`, from `git diff --raw`); marker and
-  name are color-coded by kind (new green, deleted red, submodule cyan); the `@`
+  one-letter change marker (`A`/`?`/`M`/`D`/`R`/`T`/`S`/`U`, from `git diff --raw`,
+  plus the porcelain status for conflicts) colored by kind (see the `-u` table
+  above), and a `+x`/`-x` hint on executable-bit flips; the `@`
   marker moves there. This block is computed by the in-file `uncommitted_stat`
   function — the same code the [`git-smartstat`](#git-smartstat) command runs.
 - **Public window** — `-n` commits starting at the base.

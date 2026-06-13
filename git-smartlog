@@ -49,11 +49,13 @@
 #     the body via a throwaway index overlay (`git add -N` against a copy of the
 #     index), so they show as new-file additions without touching the real index;
 #     count and line totals come from that same diff, so header always matches body.
-#     Each body filename is prefixed with a one-letter change marker (classified via
-#     `git diff --raw`: A added, D deleted, M modified, R renamed, S submodule) and
-#     both marker and name are color-coded by kind: new green, deleted red, submodule
-#     cyan, the rest default. The @ marker moves to the node — that's where the
-#     working copy is — and HEAD drops to o (keeps author/subject).
+#     Each body filename is prefixed with a one-letter change marker (from
+#     `git diff --raw`, plus porcelain for conflicts): A added, ? untracked,
+#     M modified, D deleted, R renamed, T typechange, S submodule, U unmerged;
+#     marker and name are colored by kind (see the Colors note below), and an
+#     executable-bit flip gets a trailing +x/-x hint. The @ marker moves to the
+#     node — that's where the working copy is — and HEAD drops to o (keeps
+#     author/subject).
 #   - Author: %al (email local-part, e.g. "junz")
 #   - Refs: %D filtered to remote bookmarks plus the active local branch, shown
 #     with a trailing "*" like sapling's active bookmark — but only when no remote
@@ -75,10 +77,12 @@
 #   - Refs: remote bookmarks green (\e[32m); the active local branch (name*) yellow
 #     (\e[33m). Mirrors sapling's [color] defaults sl.remote=green, sl.active=yellow
 #     (builtin_static/production.rs)
-#   - Uncommitted body (-u): a one-letter change marker (A/D/M/R/S) prefixes each
-#     filename; marker and name are colored by kind — new green (\e[32m), deleted
-#     red (\e[31m), submodule cyan (\e[36m), the rest default. git's own +/- stat
-#     graph (green/red) after the '|' is left intact
+#   - Uncommitted body (-u): a change marker prefixes each filename; marker and name
+#     are colored by kind — A added green (\e[32m), ? untracked dim green (\e[2;32m),
+#     D deleted red (\e[31m), R/C renamed blue (\e[34m), T typechange magenta
+#     (\e[35m), S submodule cyan (\e[36m), U unmerged bold red (\e[1;31m); M modified
+#     and the rest default. A +x/-x hint (dim) flags executable-bit flips. git's own
+#     +/- stat graph (green/red) after the '|' is left intact
 #   - Symbols (@/o) and lines (│ ╭─╯): default
 #
 # Relative time — mirrors sapling's `smartdate(date, 5400, age, simpledate)`:
@@ -128,9 +132,9 @@ function smartstat_usage {
 
 Show uncommitted working-tree changes as a compact stat block: a summary line
 (\"2 files, +69 -2\") followed by per-file diff bars, with untracked files folded
-in as new files and a one-letter change marker (A added, D deleted, M modified,
-R renamed, S submodule) prefixing each name. Prints nothing when the working
-tree is clean. This is the same block git-smartlog draws under -u.
+in. Each name carries a change marker — A added, ? untracked, M modified,
+D deleted, R renamed, T typechange, S submodule, U unmerged — colored by kind.
+Prints nothing when the working tree is clean. The same block git-smartlog -u draws.
 
       --color WHEN    colorize output: auto (default), always, or never
   -h, --help          show this help and exit"
@@ -362,38 +366,74 @@ function uncommitted_stat {
 
         # Prefix each body filename with a one-letter change marker, classified from
         # `git diff --raw` against the same overlay, and color-code both marker and
-        # name by kind: new files (A) green, deletions (D) red, submodule changes
-        # (gitlink mode 160000, shown as S) cyan; modified (M), renamed (R) and the
-        # rest stay default. The marker is a uniform 2-char prefix on EVERY line, so
-        # git's pre-aligned '|' column simply shifts right and stays aligned. The
-        # marker shows in plain output too; only the coloring is gated on color_on.
-        # git's own +/- graph after the '|' is untouched. Long paths git truncates
-        # to "...tail" are matched by that tail; renames show as "old => new" (no raw
-        # path match) so are flagged R via that arrow; an unmatched line falls back
-        # to a blank marker (alignment preserved).
+        # name by kind:
+        #   A new (staged)  green       ? untracked    dim green
+        #   D deleted       red         R/C renamed    blue
+        #   M modified      default     T typechange   magenta
+        #   S submodule     cyan        U unmerged     bold red
+        # A pure executable-bit flip (chmod) is status M with a "| 0" stat, so it
+        # would be invisible — surface it with a trailing "+x"/"-x" hint. The marker
+        # is a uniform 2-char prefix on EVERY line, so git's pre-aligned '|' column
+        # just shifts right and stays aligned. Markers show in plain output too; only
+        # the coloring is gated on color_on. git's own +/- graph after the '|' is
+        # untouched. Long paths git truncates to "...tail" are matched by that tail;
+        # renames show as "old => new" (no raw path match) so are flagged R via that
+        # arrow; an unmatched line falls back to a blank marker (alignment preserved).
         if (( ${#STAT_BODY} )); then
-            local -A wdir_mark wdir_col
+            local -A wdir_mark wdir_col wdir_hint
+            # Untracked paths were intent-to-added into the overlay, so `git diff`
+            # reports them as A like a staged-new file; this set re-splits them as ?.
+            local -A is_untracked
+            local u
+            for u in ${(f)untracked_raw}; do is_untracked[$u]=1; done
+            # Conflicted paths show as plain M in `git diff --raw`, so take the
+            # unmerged set from porcelain status codes (DD/AU/UD/UA/DU/AA/UU) instead.
+            local -A is_unmerged
+            local pl
+            for pl in ${(f)porcelain}; do
+                case ${pl[1,2]} in
+                    DD|AU|UD|UA|DU|AA|UU) is_unmerged[${pl[4,-1]}]=1 ;;
+                esac
+            done
+
             local raw_line
             while IFS= read -r raw_line; do
                 [[ -z $raw_line ]] && continue
                 local -a mf=(${=${raw_line%%$'\t'*}})   # :oldmode newmode oldsha newsha STATUS
                 local p=${raw_line##*$'\t'}             # path (new path for renames)
-                local st=${mf[5]} mark= col=
-                if [[ ${mf[1]#:} == 160000 || ${mf[2]} == 160000 ]]; then
-                    mark=S col=$'\e[36m'                # submodule -> cyan
+                local om=${mf[1]#:} nm=${mf[2]} st=${mf[5]} mark= col= hint=
+                if [[ $om == 160000 || $nm == 160000 ]]; then
+                    mark=S col=$'\e[36m'                  # submodule -> cyan
                 else
-                    mark=${st:0:1}                      # A/M/D/R/C/T...
-                    [[ $mark == A ]] && col=$'\e[32m'   # new file -> green
-                    [[ $mark == D ]] && col=$'\e[31m'   # deleted file -> red
+                    mark=${st:0:1}                        # A/M/D/R/C/T/U...
+                    case $mark in
+                        A) if [[ -n ${is_untracked[$p]} ]]; then
+                               mark='?' col=$'\e[2;32m'   # untracked -> dim green
+                           else
+                               col=$'\e[32m'              # staged new -> green
+                           fi ;;
+                        D)   col=$'\e[31m' ;;             # deleted -> red
+                        R|C) col=$'\e[34m' ;;             # renamed/copied -> blue
+                        T)   col=$'\e[35m' ;;             # typechange (file<->symlink) -> magenta
+                        U)   col=$'\e[1;31m' ;;           # unmerged/conflict -> bold red
+                    esac
+                    # Executable-bit flip that --stat renders as "| 0" (status M).
+                    if [[ $mark == M && $om != $nm && $om != 000000 && $nm != 000000 ]]; then
+                        [[ $nm == 100755 ]] && hint=' +x'
+                        [[ $nm == 100644 && $om == 100755 ]] && hint=' -x'
+                    fi
                 fi
+                # A conflicted path overrides everything else: unmerged -> bold red U.
+                [[ -n ${is_unmerged[$p]} ]] && { mark=U; col=$'\e[1;31m'; hint=; }
                 wdir_mark[$p]=$mark
                 wdir_col[$p]=$col
+                wdir_hint[$p]=$hint
             done < <(GIT_INDEX_FILE=$stat_index git diff --raw $diff_target 2>/dev/null)
 
             if (( ${#wdir_mark} )); then
                 local creset=$'\e[0m'
                 local -a marked=()
-                local sline= before= after= lead= body= trail= nf= mark= col= cp=
+                local sline= before= after= lead= body= trail= nf= mark= col= hint= cp=
                 for sline in $STAT_BODY; do
                     before=${sline%%\|*}            # " name<pad> " up to the first '|'
                     if [[ $before == $sline ]]; then
@@ -406,24 +446,28 @@ function uncommitted_stat {
                     nf=${body%"$trail"}             # the display name
                     mark=${wdir_mark[$nf]}
                     col=${wdir_col[$nf]}
+                    hint=${wdir_hint[$nf]}
                     if [[ -z $mark ]]; then
                         if [[ $nf == *" => "* ]]; then
-                            mark=R                  # rename: stat shows "old => new"
+                            mark=R col=$'\e[34m'    # rename: stat shows "old => new" -> blue
                         elif [[ $nf == ...* ]]; then
                             for cp in ${(k)wdir_mark}; do   # truncated path: match by tail
                                 if [[ $cp == *"${nf#...}" ]]; then
                                     mark=${wdir_mark[$cp]}
                                     col=${wdir_col[$cp]}
+                                    hint=${wdir_hint[$cp]}
                                     break
                                 fi
                             done
                         fi
                         [[ -z $mark ]] && mark=' '  # fallback: blank marker, keep alignment
                     fi
+                    # Dim the mode hint so it reads as a subordinate annotation.
+                    (( color_on )) && [[ -n $hint ]] && hint=$'\e[2m'"${hint}${creset}"
                     if (( color_on )) && [[ -n $col ]]; then
-                        marked+=("${lead}${col}${mark}${creset} ${col}${nf}${creset}${trail}${after}")
+                        marked+=("${lead}${col}${mark}${creset} ${col}${nf}${creset}${trail}${after}${hint}")
                     else
-                        marked+=("${lead}${mark} ${nf}${trail}${after}")
+                        marked+=("${lead}${mark} ${nf}${trail}${after}${hint}")
                     fi
                 done
                 STAT_BODY=("${marked[@]}")

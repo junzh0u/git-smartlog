@@ -72,8 +72,8 @@ top of `HEAD` whenever the working tree is dirty: compact totals in the header,
 per-file `git diff --stat HEAD` bars in the body. Untracked files are folded into
 both (as new-file additions) via a throwaway index overlay, so they appear without
 touching the real index. Body filenames are color-coded by change kind (new files
-green, submodule changes cyan, everything else left default), on top of git's usual
-green/red `+`/`-` bars. The `@` marker moves to it — that's where the working copy
+green, deletions red, submodule changes cyan, everything else left default), on top
+of git's usual green/red `+`/`-` bars. The `@` marker moves to it — that's where the working copy
 is — and `HEAD` drops to an `o` (keeping its author and subject). This is a
 git-smartlog extension with no Sapling equivalent, so the output no longer mirrors
 `sl` (see [Differences](#differences-from-saplings-sl)):
@@ -148,8 +148,8 @@ usage: git-smartlog [-u] [-n N] [--base REV]
   (`git diff --shortstat`) and per-file `git diff --stat HEAD` bars in the body,
   both computed against a throwaway index overlay that intent-to-adds untracked
   files so they're folded in without mutating the repo. Body filenames are
-  color-coded by change kind (new green, submodule cyan; classified via
-  `git diff --raw`); the `@` marker moves there.
+  color-coded by change kind (new green, deleted red, submodule cyan; classified
+  via `git diff --raw`); the `@` marker moves there.
 - **Public window** — `-n` commits starting at the base.
 - **Relative time** — mirrors Sapling's `smartdate`: `age()` ("N minutes ago")
   within 90 minutes, calendar-day `simpledate()` ("Yesterday", "Mon DD", …)

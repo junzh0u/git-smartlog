@@ -42,9 +42,9 @@
 #     index), so they show as new-file additions without touching the real index;
 #     count and line totals come from that same diff, so header always matches body.
 #     In the body, git leaves filenames uncolored; this script color-codes them by
-#     change kind (classified via `git diff --raw`): new files green, submodule
-#     changes cyan, others left default. The @ marker moves to the node — that's
-#     where the working copy is — and HEAD drops to o (but keeps its author/subject).
+#     change kind (classified via `git diff --raw`): new files green, deletions red,
+#     submodule changes cyan, others left default. The @ marker moves to the node —
+#     that's where the working copy is — and HEAD drops to o (keeps author/subject).
 #   - Author: %al (email local-part, e.g. "junz")
 #   - Refs: %D filtered to remote bookmarks plus the active local branch, shown
 #     with a trailing "*" like sapling's active bookmark — but only when no remote
@@ -66,8 +66,9 @@
 #   - Refs: remote bookmarks green (\e[32m); the active local branch (name*) yellow
 #     (\e[33m). Mirrors sapling's [color] defaults sl.remote=green, sl.active=yellow
 #     (builtin_static/production.rs)
-#   - Uncommitted body filenames (-u): new files green (\e[32m), submodule changes
-#     cyan (\e[36m); git's own +/- stat graph (green/red) is left intact
+#   - Uncommitted body filenames (-u): new files green (\e[32m), deletions red
+#     (\e[31m), submodule changes cyan (\e[36m); git's own +/- stat graph
+#     (green/red) is left intact
 #   - Symbols (@/o) and lines (│ ╭─╯): default
 #
 # Relative time — mirrors sapling's `smartdate(date, 5400, age, simpledate)`:
@@ -378,8 +379,9 @@ function main {
         (( ${#wdir_stat} > 0 )) && wdir_stat=("${(@)wdir_stat[1,-2]}")
 
         # Color-code the body filenames that git's --stat leaves plain: new files
-        # (status A) green, submodule changes (gitlink mode 160000) cyan. Classify
-        # each path from `git diff --raw` against the same overlay, then wrap just
+        # (status A) green, deletions (status D) red, submodule changes (gitlink
+        # mode 160000) cyan. Classify each path from `git diff --raw` against the
+        # same overlay (submodule wins over A/D when both apply), then wrap just
         # the name chars in the matching stat line — git's own +/- graph coloring
         # (already in the captured line, after the '|') is left untouched. Only runs
         # when rendering in color, matching the stat_color gate above. Paths long
@@ -396,6 +398,8 @@ function main {
                     wdir_class[$p]=$'\e[36m'             # submodule -> cyan
                 elif [[ ${mf[5]} == A* ]]; then
                     wdir_class[$p]=$'\e[32m'             # new file -> green
+                elif [[ ${mf[5]} == D* ]]; then
+                    wdir_class[$p]=$'\e[31m'             # deleted file -> red
                 fi
             done < <(GIT_INDEX_FILE=$stat_index git diff --raw HEAD 2>/dev/null)
 

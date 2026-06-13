@@ -41,8 +41,10 @@
 #     the body via a throwaway index overlay (`git add -N` against a copy of the
 #     index), so they show as new-file additions without touching the real index;
 #     count and line totals come from that same diff, so header always matches body.
-#     The @ marker moves to the node — that's where the working copy is — and HEAD
-#     drops to o (but keeps its author/subject).
+#     In the body, git leaves filenames uncolored; this script color-codes them by
+#     change kind (classified via `git diff --raw`): new files green, submodule
+#     changes cyan, others left default. The @ marker moves to the node — that's
+#     where the working copy is — and HEAD drops to o (but keeps its author/subject).
 #   - Author: %al (email local-part, e.g. "junz")
 #   - Refs: %D filtered to remote bookmarks plus the active local branch, shown
 #     with a trailing "*" like sapling's active bookmark — but only when no remote
@@ -64,6 +66,8 @@
 #   - Refs: remote bookmarks green (\e[32m); the active local branch (name*) yellow
 #     (\e[33m). Mirrors sapling's [color] defaults sl.remote=green, sl.active=yellow
 #     (builtin_static/production.rs)
+#   - Uncommitted body filenames (-u): new files green (\e[32m), submodule changes
+#     cyan (\e[36m); git's own +/- stat graph (green/red) is left intact
 #   - Symbols (@/o) and lines (│ ╭─╯): default
 #
 # Relative time — mirrors sapling's `smartdate(date, 5400, age, simpledate)`:
@@ -372,6 +376,58 @@ function main {
         [[ -t 1 && -z $NO_COLOR ]] && stat_color=--color=always
         wdir_stat=("${(@f)$(GIT_INDEX_FILE=$stat_index git diff $stat_color --stat HEAD 2>/dev/null)}")
         (( ${#wdir_stat} > 0 )) && wdir_stat=("${(@)wdir_stat[1,-2]}")
+
+        # Color-code the body filenames that git's --stat leaves plain: new files
+        # (status A) green, submodule changes (gitlink mode 160000) cyan. Classify
+        # each path from `git diff --raw` against the same overlay, then wrap just
+        # the name chars in the matching stat line — git's own +/- graph coloring
+        # (already in the captured line, after the '|') is left untouched. Only runs
+        # when rendering in color, matching the stat_color gate above. Paths long
+        # enough that git truncates the name column to "...tail" are matched by that
+        # tail; anything unmatched simply keeps the default (uncolored) name.
+        if [[ $stat_color == *always ]] && (( ${#wdir_stat} )); then
+            local -A wdir_class
+            local raw_line
+            while IFS= read -r raw_line; do
+                [[ -z $raw_line ]] && continue
+                local -a mf=(${=${raw_line%%$'\t'*}})   # :oldmode newmode oldsha newsha STATUS
+                local p=${raw_line##*$'\t'}             # path (new path for renames)
+                if [[ ${mf[1]#:} == 160000 || ${mf[2]} == 160000 ]]; then
+                    wdir_class[$p]=$'\e[36m'             # submodule -> cyan
+                elif [[ ${mf[5]} == A* ]]; then
+                    wdir_class[$p]=$'\e[32m'             # new file -> green
+                fi
+            done < <(GIT_INDEX_FILE=$stat_index git diff --raw HEAD 2>/dev/null)
+
+            if (( ${#wdir_class} )); then
+                local creset=$'\e[0m'
+                local -a recolored=()
+                local sline= before= after= lead= body= trail= nf= col= cp=
+                for sline in $wdir_stat; do
+                    before=${sline%%\|*}            # " name<pad> " up to the first '|'
+                    if [[ $before == $sline ]]; then
+                        recolored+=("$sline"); continue   # no '|' (summary slack): keep
+                    fi
+                    after=${sline#"$before"}        # "| graph..." with git's colors
+                    lead=${before%%[! ]*}           # leading spaces
+                    body=${before#"$lead"}          # name + trailing pad
+                    trail=${body##*[! ]}            # trailing spaces
+                    nf=${body%"$trail"}             # the display name
+                    col=${wdir_class[$nf]}
+                    if [[ -z $col && $nf == ...* ]]; then   # truncated long path: match by tail
+                        for cp in ${(k)wdir_class}; do
+                            [[ $cp == *"${nf#...}" ]] && { col=${wdir_class[$cp]}; break }
+                        done
+                    fi
+                    if [[ -n $col ]]; then
+                        recolored+=("${lead}${col}${nf}${creset}${trail}${after}")
+                    else
+                        recolored+=("$sline")
+                    fi
+                done
+                wdir_stat=("${recolored[@]}")
+            fi
+        fi
         [[ -n $tmp_index ]] && rm -f "$tmp_index"
     fi
 

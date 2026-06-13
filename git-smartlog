@@ -1,8 +1,16 @@
 #!/usr/bin/env zsh
 # Sapling-style smartlog using only git.
 #
-# Self-contained: depends only on zsh and git, so it can be downloaded and run
-# standalone — no other files from this repo are required.
+# Self-contained: a single file depending only on zsh and git, so it can be
+# downloaded and run standalone — no other files from this repo are required. The
+# -u (uncommitted changes) node needs nothing external either: its stat block is
+# computed by the in-file `uncommitted_stat` function.
+#
+# Multi-call: this same file is also `git-smartstat`. Symlink it under that name
+# (e.g. `ln -s git-smartlog git-smartstat`) and the git-smartstat name runs ONLY
+# the uncommitted-changes stat — the exact body that -u draws — as a standalone
+# command (`git smartstat`). Dispatch is on the invocation name ($PROG) at the
+# bottom; both names share `uncommitted_stat`, so there's no duplicated logic.
 #
 # Differences from sapling's `sl`
 #   - Single stack only: renders the CURRENT HEAD's first-parent draft chain plus
@@ -102,7 +110,7 @@ function die {
     exit 1
 }
 
-function usage {
+function smartlog_usage {
     print -r -- "usage: $PROG [-u] [-n N] [--base REV]
 
 Sapling-style smartlog using only git: the current branch's draft stack
@@ -115,20 +123,18 @@ drawn on top of its nearest public (pushed) base.
   -h, --help          show this help and exit"
 }
 
-# Self-contained option parsing. zparseopts is a zsh builtin, so no libraries are
-# needed; -K keeps the ARG_LIMIT default when -n is not passed.
-ARG_LIMIT=(1)
-ARG_BASE=()
-ARG_HELP=()
-ARG_UNCOMMITTED=()
-zparseopts -D -E -K -- \
-    {n,-limit}:=ARG_LIMIT \
-    -base:=ARG_BASE \
-    {u,-uncommitted}=ARG_UNCOMMITTED \
-    {h,-help}=ARG_HELP \
-    || { usage >&2; exit 2; }
+function smartstat_usage {
+    print -r -- "usage: $PROG [--color WHEN]
 
-(( ${#ARG_HELP} )) && { usage; exit 0; }
+Show uncommitted working-tree changes as a compact stat block: a summary line
+(\"2 files, +69 -2\") followed by per-file diff bars, with untracked files folded
+in as new files and a one-letter change marker (A added, D deleted, M modified,
+R renamed, S submodule) prefixing each name. Prints nothing when the working
+tree is clean. This is the same block git-smartlog draws under -u.
+
+      --color WHEN    colorize output: auto (default), always, or never
+  -h, --help          show this help and exit"
+}
 
 function resolve_base {
     local arg=$1
@@ -185,6 +191,10 @@ function resolve_base {
 
 # Globals set once in main() to avoid per-commit recomputation.
 typeset -g NOW TODAY_MIDNIGHT CURRENT_YEAR ACTIVE_BRANCH
+
+# uncommitted_stat()'s outputs (REPLY-style globals, read by both entry points).
+typeset -g STAT_HAS_CHANGES STAT_SUMMARY
+typeset -ga STAT_BODY
 
 # Helpers set REPLY instead of printing — avoids a $(...) subshell per call.
 
@@ -286,7 +296,156 @@ function filter_refs {
     REPLY="${(j: :)out}"
 }
 
+function uncommitted_stat {
+    # Compute the uncommitted-changes stat block. $1 = color_on (1 to colorize the
+    # marker/name and request colored +/- bars from git; 0 for plain). Sets globals
+    # STAT_HAS_CHANGES (0/1), STAT_SUMMARY (a plain "N files, +X -Y" string — never
+    # colored, the caller styles it) and STAT_BODY (per-file body lines, marked and,
+    # when color_on, colored). Reads the working tree only; never mutates the real
+    # index. Shared by `git-smartlog -u` and standalone `git-smartstat`.
+    local color_on=$1
+    STAT_HAS_CHANGES=0
+    STAT_SUMMARY=
+    STAT_BODY=()
+
+    local porcelain=$(git status --porcelain 2>/dev/null)
+    [[ -z $porcelain ]] && return
+    STAT_HAS_CHANGES=1
+
+    # Diff against HEAD, or git's empty-tree object when HEAD is unborn (a repo with
+    # no commits) so staged/untracked files still show as additions.
+    local diff_target=HEAD
+    git rev-parse --verify --quiet HEAD >/dev/null 2>&1 ||
+        diff_target=4b825dc642cb6eb9a060e54bf8d69288fbee4904
+
+    # `git diff` only sees tracked paths, so untracked files would be missing from
+    # both the +/- totals and the per-file body. To fold them in WITHOUT mutating
+    # the repo, copy the index to a throwaway file and `git add -N` (intent-to-add)
+    # the untracked paths there: against that temp index, `git diff` renders each
+    # untracked file as a new file with its lines as additions, aligned with the
+    # tracked entries. GIT_INDEX_FILE keeps the real index and working tree
+    # untouched. With no untracked files, stat_index points at the real index — a
+    # no-op. The temp index is removed via `always`, even on an early error.
+    local untracked_raw=$(git ls-files --others --exclude-standard 2>/dev/null)
+    local stat_index=$(git rev-parse --git-path index 2>/dev/null)
+    local tmp_index=
+    {
+        if [[ -n $untracked_raw ]]; then
+            local -a untracked=("${(@f)untracked_raw}")
+            tmp_index=$(mktemp) || die "cannot create temp index"
+            [[ -f $stat_index ]] && cp "$stat_index" "$tmp_index"
+            GIT_INDEX_FILE=$tmp_index git add -N -- "${untracked[@]}" 2>/dev/null
+            stat_index=$tmp_index
+        fi
+
+        # Compact totals for the summary line. File count AND line totals come from
+        # the same overlay diff, so the summary always agrees with the body below
+        # (an untracked directory expands to its individual files in both).
+        local shortstat n_files=0 ins=0 del=0
+        shortstat=$(GIT_INDEX_FILE=$stat_index git diff --shortstat $diff_target 2>/dev/null)
+        [[ $shortstat =~ '([0-9]+) files? changed' ]] && n_files=$match[1]
+        [[ $shortstat =~ '([0-9]+) insertion' ]] && ins=$match[1]
+        [[ $shortstat =~ '([0-9]+) deletion' ]] && del=$match[1]
+        local file_word=files
+        (( n_files == 1 )) && file_word=file
+        STAT_SUMMARY="${n_files} ${file_word}"
+        (( ins > 0 || del > 0 )) && STAT_SUMMARY+=", +${ins} -${del}"
+
+        # Per-file body from `git diff --stat`, minus its trailing summary line
+        # (those totals already sit in the summary). Captured via $(...) so git uses
+        # its stable non-TTY default width regardless of the caller's terminal —
+        # which also strips its color, so force it back on when color_on.
+        local stat_color=--color=never
+        (( color_on )) && stat_color=--color=always
+        STAT_BODY=("${(@f)$(GIT_INDEX_FILE=$stat_index git diff $stat_color --stat $diff_target 2>/dev/null)}")
+        (( ${#STAT_BODY} > 0 )) && STAT_BODY=("${(@)STAT_BODY[1,-2]}")
+
+        # Prefix each body filename with a one-letter change marker, classified from
+        # `git diff --raw` against the same overlay, and color-code both marker and
+        # name by kind: new files (A) green, deletions (D) red, submodule changes
+        # (gitlink mode 160000, shown as S) cyan; modified (M), renamed (R) and the
+        # rest stay default. The marker is a uniform 2-char prefix on EVERY line, so
+        # git's pre-aligned '|' column simply shifts right and stays aligned. The
+        # marker shows in plain output too; only the coloring is gated on color_on.
+        # git's own +/- graph after the '|' is untouched. Long paths git truncates
+        # to "...tail" are matched by that tail; renames show as "old => new" (no raw
+        # path match) so are flagged R via that arrow; an unmatched line falls back
+        # to a blank marker (alignment preserved).
+        if (( ${#STAT_BODY} )); then
+            local -A wdir_mark wdir_col
+            local raw_line
+            while IFS= read -r raw_line; do
+                [[ -z $raw_line ]] && continue
+                local -a mf=(${=${raw_line%%$'\t'*}})   # :oldmode newmode oldsha newsha STATUS
+                local p=${raw_line##*$'\t'}             # path (new path for renames)
+                local st=${mf[5]} mark= col=
+                if [[ ${mf[1]#:} == 160000 || ${mf[2]} == 160000 ]]; then
+                    mark=S col=$'\e[36m'                # submodule -> cyan
+                else
+                    mark=${st:0:1}                      # A/M/D/R/C/T...
+                    [[ $mark == A ]] && col=$'\e[32m'   # new file -> green
+                    [[ $mark == D ]] && col=$'\e[31m'   # deleted file -> red
+                fi
+                wdir_mark[$p]=$mark
+                wdir_col[$p]=$col
+            done < <(GIT_INDEX_FILE=$stat_index git diff --raw $diff_target 2>/dev/null)
+
+            if (( ${#wdir_mark} )); then
+                local creset=$'\e[0m'
+                local -a marked=()
+                local sline= before= after= lead= body= trail= nf= mark= col= cp=
+                for sline in $STAT_BODY; do
+                    before=${sline%%\|*}            # " name<pad> " up to the first '|'
+                    if [[ $before == $sline ]]; then
+                        marked+=("$sline"); continue   # no '|' (shouldn't happen): keep
+                    fi
+                    after=${sline#"$before"}        # "| graph..." with git's colors
+                    lead=${before%%[! ]*}           # leading spaces
+                    body=${before#"$lead"}          # name + trailing pad
+                    trail=${body##*[! ]}            # trailing spaces
+                    nf=${body%"$trail"}             # the display name
+                    mark=${wdir_mark[$nf]}
+                    col=${wdir_col[$nf]}
+                    if [[ -z $mark ]]; then
+                        if [[ $nf == *" => "* ]]; then
+                            mark=R                  # rename: stat shows "old => new"
+                        elif [[ $nf == ...* ]]; then
+                            for cp in ${(k)wdir_mark}; do   # truncated path: match by tail
+                                if [[ $cp == *"${nf#...}" ]]; then
+                                    mark=${wdir_mark[$cp]}
+                                    col=${wdir_col[$cp]}
+                                    break
+                                fi
+                            done
+                        fi
+                        [[ -z $mark ]] && mark=' '  # fallback: blank marker, keep alignment
+                    fi
+                    if (( color_on )) && [[ -n $col ]]; then
+                        marked+=("${lead}${col}${mark}${creset} ${col}${nf}${creset}${trail}${after}")
+                    else
+                        marked+=("${lead}${mark} ${nf}${trail}${after}")
+                    fi
+                done
+                STAT_BODY=("${marked[@]}")
+            fi
+        fi
+    } always {
+        [[ -n $tmp_index ]] && rm -f "$tmp_index"
+    }
+}
+
 function main {
+    # Option parsing (zparseopts is a zsh builtin; -K keeps the ARG_LIMIT default
+    # when -n is not passed). Operates on main's own positional params ("$@").
+    local -a ARG_LIMIT=(1) ARG_BASE=() ARG_UNCOMMITTED=() ARG_HELP=()
+    zparseopts -D -E -K -- \
+        {n,-limit}:=ARG_LIMIT \
+        -base:=ARG_BASE \
+        {u,-uncommitted}=ARG_UNCOMMITTED \
+        {h,-help}=ARG_HELP \
+        || { smartlog_usage >&2; exit 2; }
+    (( ${#ARG_HELP} )) && { smartlog_usage; exit 0; }
+
     NOW=$EPOCHSECONDS
     local today
     strftime -s today '%Y-%m-%d' $NOW
@@ -331,127 +490,20 @@ function main {
     merge_base=$(git merge-base HEAD "$base_ref" 2>/dev/null) ||
         die "No merge-base between HEAD and $base_ref"
 
-    # Working-directory changes render as a synthetic "Uncommitted changes" draft
+    # Uncommitted working-tree changes render as a synthetic "Uncommitted changes"
     # node on top of HEAD; the @ marker moves there, since that's where the working
-    # copy actually is. Capture status once and summarize file/line counts.
+    # copy actually is. The stat block is computed by uncommitted_stat (the very
+    # same code the standalone `git-smartstat` runs) — we just consume its
+    # REPLY-style globals. Color matches the C_* palette gate below.
     local has_changes=0 wdir_summary=
     local -a wdir_stat
-    local porcelain=
-    (( ${#ARG_UNCOMMITTED} )) && porcelain=$(git status --porcelain 2>/dev/null)
-    if [[ -n $porcelain ]]; then
-        has_changes=1
-        # `git diff HEAD` only sees tracked paths, so untracked files would be
-        # missing from both the +/- totals and the per-file body. To fold them in
-        # WITHOUT mutating the repo, copy the index to a throwaway file and
-        # `git add -N` (intent-to-add) the untracked paths there: against that temp
-        # index, `git diff HEAD` renders each untracked file as a new file with its
-        # lines as additions, aligned with the tracked entries. GIT_INDEX_FILE keeps
-        # the real index and working tree untouched. With no untracked files,
-        # stat_index just points at the real index — a no-op.
-        local untracked_raw=$(git ls-files --others --exclude-standard 2>/dev/null)
-        local stat_index=$(git rev-parse --git-path index 2>/dev/null)
-        local tmp_index=
-        if [[ -n $untracked_raw ]]; then
-            local -a untracked=("${(@f)untracked_raw}")
-            tmp_index=$(mktemp)
-            [[ -f $stat_index ]] && cp "$stat_index" "$tmp_index"
-            GIT_INDEX_FILE=$tmp_index git add -N -- "${untracked[@]}" 2>/dev/null
-            stat_index=$tmp_index
-        fi
-        # Compact totals for the header line. File count AND line totals come from
-        # the same overlay diff, so the header always agrees with the body below
-        # (an untracked directory expands to its individual files in both).
-        local shortstat n_files=0 ins=0 del=0
-        shortstat=$(GIT_INDEX_FILE=$stat_index git diff --shortstat HEAD 2>/dev/null)
-        [[ $shortstat =~ '([0-9]+) files? changed' ]] && n_files=$match[1]
-        [[ $shortstat =~ '([0-9]+) insertion' ]] && ins=$match[1]
-        [[ $shortstat =~ '([0-9]+) deletion' ]] && del=$match[1]
-        local file_word=files
-        (( n_files == 1 )) && file_word=file
-        wdir_summary="${n_files} ${file_word}"
-        (( ins > 0 || del > 0 )) && wdir_summary+=", +${ins} -${del}"
-        # Per-file body from `git diff --stat HEAD`, minus its trailing summary line
-        # (those totals already sit in the header). Captured via $(...) so git uses
-        # its stable non-TTY default width regardless of the caller's terminal —
-        # which also strips its color, so force it back on when we're rendering in
-        # color (matching the same TTY/NO_COLOR test as the C_* palette below).
-        local stat_color=--color=never
-        [[ -t 1 && -z $NO_COLOR ]] && stat_color=--color=always
-        wdir_stat=("${(@f)$(GIT_INDEX_FILE=$stat_index git diff $stat_color --stat HEAD 2>/dev/null)}")
-        (( ${#wdir_stat} > 0 )) && wdir_stat=("${(@)wdir_stat[1,-2]}")
-
-        # Prefix each body filename with a one-letter change marker, classified from
-        # `git diff --raw` against the same overlay, and color-code both marker and
-        # name by kind: new files (A) green, deletions (D) red, submodule changes
-        # (gitlink mode 160000, shown as S) cyan; modified (M), renamed (R) and the
-        # rest stay default. The marker is a uniform 2-char prefix on EVERY line, so
-        # git's pre-aligned '|' column simply shifts right and stays aligned. The
-        # marker shows in plain output too; only the coloring is gated on color being
-        # on (the stat_color test). git's own +/- graph after the '|' is untouched.
-        # Long paths git truncates to "...tail" are matched by that tail; renames
-        # show as "old => new" (no raw path match) so are flagged R via that arrow;
-        # an unmatched line falls back to a blank marker (alignment preserved).
-        if (( ${#wdir_stat} )); then
-            local -A wdir_mark wdir_col
-            local raw_line
-            while IFS= read -r raw_line; do
-                [[ -z $raw_line ]] && continue
-                local -a mf=(${=${raw_line%%$'\t'*}})   # :oldmode newmode oldsha newsha STATUS
-                local p=${raw_line##*$'\t'}             # path (new path for renames)
-                local st=${mf[5]} mark= col=
-                if [[ ${mf[1]#:} == 160000 || ${mf[2]} == 160000 ]]; then
-                    mark=S col=$'\e[36m'                # submodule -> cyan
-                else
-                    mark=${st:0:1}                      # A/M/D/R/C/T...
-                    [[ $mark == A ]] && col=$'\e[32m'   # new file -> green
-                    [[ $mark == D ]] && col=$'\e[31m'   # deleted file -> red
-                fi
-                wdir_mark[$p]=$mark
-                wdir_col[$p]=$col
-            done < <(GIT_INDEX_FILE=$stat_index git diff --raw HEAD 2>/dev/null)
-
-            if (( ${#wdir_mark} )); then
-                local color_on=0
-                [[ $stat_color == *always ]] && color_on=1
-                local creset=$'\e[0m'
-                local -a marked=()
-                local sline= before= after= lead= body= trail= nf= mark= col= cp=
-                for sline in $wdir_stat; do
-                    before=${sline%%\|*}            # " name<pad> " up to the first '|'
-                    if [[ $before == $sline ]]; then
-                        marked+=("$sline"); continue   # no '|' (shouldn't happen): keep
-                    fi
-                    after=${sline#"$before"}        # "| graph..." with git's colors
-                    lead=${before%%[! ]*}           # leading spaces
-                    body=${before#"$lead"}          # name + trailing pad
-                    trail=${body##*[! ]}            # trailing spaces
-                    nf=${body%"$trail"}             # the display name
-                    mark=${wdir_mark[$nf]}
-                    col=${wdir_col[$nf]}
-                    if [[ -z $mark ]]; then
-                        if [[ $nf == *" => "* ]]; then
-                            mark=R                  # rename: stat shows "old => new"
-                        elif [[ $nf == ...* ]]; then
-                            for cp in ${(k)wdir_mark}; do   # truncated path: match by tail
-                                if [[ $cp == *"${nf#...}" ]]; then
-                                    mark=${wdir_mark[$cp]}
-                                    col=${wdir_col[$cp]}
-                                    break
-                                fi
-                            done
-                        fi
-                        [[ -z $mark ]] && mark=' '  # fallback: blank marker, keep alignment
-                    fi
-                    if (( color_on )) && [[ -n $col ]]; then
-                        marked+=("${lead}${col}${mark}${creset} ${col}${nf}${creset}${trail}${after}")
-                    else
-                        marked+=("${lead}${mark} ${nf}${trail}${after}")
-                    fi
-                done
-                wdir_stat=("${marked[@]}")
-            fi
-        fi
-        [[ -n $tmp_index ]] && rm -f "$tmp_index"
+    if (( ${#ARG_UNCOMMITTED} )); then
+        local color_on=0
+        [[ -t 1 && -z $NO_COLOR ]] && color_on=1
+        uncommitted_stat $color_on
+        has_changes=$STAT_HAS_CHANGES
+        wdir_summary=$STAT_SUMMARY
+        wdir_stat=("${STAT_BODY[@]}")
     fi
 
     local -a drafts publics
@@ -604,4 +656,47 @@ function main {
     done
 }
 
-main
+function smartstat_main {
+    # Standalone entry point (invoked as git-smartstat): print just the uncommitted
+    # stat block — a plain summary line followed by the per-file body — or nothing
+    # when the working tree is clean. --color WHEN is auto (default), always, never.
+    local -a ARG_COLOR=(auto) ARG_HELP=()
+    zparseopts -D -E -K -- \
+        -color:=ARG_COLOR \
+        {h,-help}=ARG_HELP \
+        || { smartstat_usage >&2; exit 2; }
+    (( ${#ARG_HELP} )) && { smartstat_usage; exit 0; }
+    # -E leaves anything unrecognized (e.g. --bogus) in the positionals; we take no
+    # positional args, so treat leftovers as a usage error.
+    (( $# )) && { print -ru2 -- "$PROG: unexpected argument: $1"; smartstat_usage >&2; exit 2; }
+
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
+        die "not a git repository"
+
+    # zparseopts keeps the "=" of the --color=WHEN form (--color WHEN gives a bare
+    # value), so strip one leading "=" before matching.
+    local when=${ARG_COLOR[-1]#=}
+    local color_on=0
+    case $when in
+        always) color_on=1 ;;
+        never)  color_on=0 ;;
+        auto)   [[ -t 1 && -z $NO_COLOR ]] && color_on=1 ;;
+        *)      print -ru2 -- "$PROG: invalid --color: $when (use auto, always, or never)"
+                exit 2 ;;
+    esac
+
+    uncommitted_stat $color_on
+    (( STAT_HAS_CHANGES )) || return 0
+    print -r -- "$STAT_SUMMARY"
+    local line
+    for line in "${STAT_BODY[@]}"; do
+        print -r -- "$line"
+    done
+}
+
+# Multi-call dispatch on the invocation name: git-smartstat runs only the stat
+# block, anything else (git-smartlog) runs the full smartlog.
+case $PROG in
+    git-smartstat|smartstat) smartstat_main "$@" ;;
+    *)                       main "$@" ;;
+esac

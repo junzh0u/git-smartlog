@@ -1,7 +1,8 @@
 # git-smartlog
 
 A [Sapling](https://sapling-scm.com/)-style `smartlog` for plain Git, in a single
-self-contained zsh script.
+self-contained zsh script. The same file doubles as
+[`git-smartstat`](#git-smartstat), a standalone view of uncommitted changes.
 
 It renders the current branch's **draft stack** — the first-parent chain of your
 local (unpushed) commits — drawn on top of its nearest **public** (pushed) base,
@@ -109,7 +110,8 @@ isn't a TTY (as in these captures) or when `NO_COLOR` is set.
 - `git`
 
 That's it. The script sources nothing else, so you can drop it anywhere on your
-`PATH` and run it.
+`PATH` and run it — `-u` included, since its stat block is computed in-file (see
+[git-smartstat](#git-smartstat)).
 
 ## Install
 
@@ -117,6 +119,8 @@ That's it. The script sources nothing else, so you can drop it anywhere on your
 curl -fsSL https://raw.githubusercontent.com/junzh0u/git-smartlog/master/git-smartlog \
   -o ~/.local/bin/git-smartlog
 chmod +x ~/.local/bin/git-smartlog
+# optional: the same file doubles as `git smartstat` (see below)
+ln -s git-smartlog ~/.local/bin/git-smartstat
 ```
 
 Because the script is named `git-smartlog` and lives on your `PATH`, Git picks it
@@ -138,6 +142,39 @@ usage: git-smartlog [-u] [-n N] [--base REV]
   -h, --help          show this help and exit
 ```
 
+## git-smartstat
+
+The uncommitted-changes block isn't just an add-on to the graph — it's also useful
+on its own. `git-smartlog` is **multi-call**: the same file, invoked under the name
+`git-smartstat`, prints *only* that block (the exact body `-u` draws) as a
+standalone command. Symlink it and you get `git smartstat`:
+
+```sh
+ln -s git-smartlog ~/.local/bin/git-smartstat
+```
+
+```
+usage: git-smartstat [--color WHEN]
+
+      --color WHEN    colorize output: auto (default), always, or never
+  -h, --help          show this help and exit
+```
+
+```text
+$ git smartstat
+4 files, +20 -17
+ A config.yaml    |  5 +++++
+ M http_client.go | 18 ++++++++++++++----
+ D legacy_api.go  | 12 ------------
+ S vendor/sdk     |  2 +-
+```
+
+It prints nothing when the working tree is clean. Both names share one in-file
+function (`uncommitted_stat`), so there's no duplicated logic and `git-smartlog`
+stays a single self-contained file — `-u` needs nothing external. (Standalone,
+`git-smartstat` also works in a repo with no commits yet, diffing against the
+empty tree so staged and untracked files still show as additions.)
+
 ## How it works
 
 - **Public base** — the nearest public ancestor of `HEAD`. Candidate trunks are
@@ -153,7 +190,8 @@ usage: git-smartlog [-u] [-n N] [--base REV]
   files so they're folded in without mutating the repo. Each body filename gets a
   one-letter change marker (`A`/`D`/`M`/`R`/`S`, from `git diff --raw`); marker and
   name are color-coded by kind (new green, deleted red, submodule cyan); the `@`
-  marker moves there.
+  marker moves there. This block is computed by the in-file `uncommitted_stat`
+  function — the same code the [`git-smartstat`](#git-smartstat) command runs.
 - **Public window** — `-n` commits starting at the base.
 - **Relative time** — mirrors Sapling's `smartdate`: `age()` ("N minutes ago")
   within 90 minutes, calendar-day `simpledate()` ("Yesterday", "Mon DD", …)

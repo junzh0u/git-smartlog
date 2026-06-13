@@ -71,19 +71,22 @@ With `-u` / `--uncommitted`, a synthetic **Uncommitted changes** node is drawn o
 top of `HEAD` whenever the working tree is dirty: compact totals in the header,
 per-file `git diff --stat HEAD` bars in the body. Untracked files are folded into
 both (as new-file additions) via a throwaway index overlay, so they appear without
-touching the real index. Body filenames are color-coded by change kind (new files
-green, deletions red, submodule changes cyan, everything else left default), on top
-of git's usual green/red `+`/`-` bars. The `@` marker moves to it — that's where the working copy
-is — and `HEAD` drops to an `o` (keeping its author and subject). This is a
-git-smartlog extension with no Sapling equivalent, so the output no longer mirrors
-`sl` (see [Differences](#differences-from-saplings-sl)):
+touching the real index. Each body filename is prefixed with a one-letter change
+marker (`A` added, `D` deleted, `M` modified, `R` renamed, `S` submodule) and both
+marker and name are color-coded by kind (new green, deleted red, submodule cyan,
+the rest default), on top of git's usual green/red `+`/`-` bars. The `@` marker
+moves to it — that's where the working copy is — and `HEAD` drops to an `o` (keeping
+its author and subject). This is a git-smartlog extension with no Sapling
+equivalent, so the output no longer mirrors `sl`
+(see [Differences](#differences-from-saplings-sl)):
 
 ```text
 $ git smartlog -u
-  @  Uncommitted changes  3 files, +31 -4
-  │ config.yaml    |  5 +++++
-  │ http_client.go | 18 ++++++++++++++----
-  │ retry.go       | 12 ++++++++++++
+  @  Uncommitted changes  4 files, +20 -17
+  │ A config.yaml    |  5 +++++
+  │ M http_client.go | 18 ++++++++++++++----
+  │ D legacy_api.go  | 12 ------------
+  │ S vendor/sdk     |  2 +-
   │
   o  23de132889  14 minutes ago  junz
   │  Wire backoff into the HTTP client
@@ -147,9 +150,10 @@ usage: git-smartlog [-u] [-n N] [--base REV]
   non-empty, a synthetic node on top of `HEAD`: compact totals in the header
   (`git diff --shortstat`) and per-file `git diff --stat HEAD` bars in the body,
   both computed against a throwaway index overlay that intent-to-adds untracked
-  files so they're folded in without mutating the repo. Body filenames are
-  color-coded by change kind (new green, deleted red, submodule cyan; classified
-  via `git diff --raw`); the `@` marker moves there.
+  files so they're folded in without mutating the repo. Each body filename gets a
+  one-letter change marker (`A`/`D`/`M`/`R`/`S`, from `git diff --raw`); marker and
+  name are color-coded by kind (new green, deleted red, submodule cyan); the `@`
+  marker moves there.
 - **Public window** — `-n` commits starting at the base.
 - **Relative time** — mirrors Sapling's `smartdate`: `age()` ("N minutes ago")
   within 90 minutes, calendar-day `simpledate()` ("Yesterday", "Mon DD", …)

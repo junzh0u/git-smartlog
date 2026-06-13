@@ -23,16 +23,16 @@ On a feature branch with a few local commits stacked on `origin/master`:
 
 ```text
 $ git smartlog
-  @  23de132889  14 minutes ago  junz
+  @  b82a2561e9  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  a8d1958eb9  Today at 10:30  junz
+  o  98f650bc74  Today at 11:26  junz
   │  Add exponential backoff with jitter
   │
-  o  2d6999d80d  Today at 08:05  junz
+  o  50faf770f4  Yesterday at 14:26  junz
 ╭─╯  Extract retry policy into its own module
 │
-o  7582005a1c  Yesterday at 16:45  junz  origin/master
+o  5c4369ce49  Wednesday at 14:26  junz  origin/master
 │  Bump dependencies
 ~
 ```
@@ -44,26 +44,26 @@ it.
 
 Widen the public window with `-n`. Public commits authored by *someone else*
 render metadata-only (no author, no subject), exactly as Sapling does — see
-`a7b65c2438` below:
+`2c8c874b9c` below:
 
 ```text
 $ git smartlog -n 5
-  @  23de132889  14 minutes ago  junz
+  @  b82a2561e9  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  a8d1958eb9  Today at 10:30  junz
+  o  98f650bc74  Today at 11:26  junz
   │  Add exponential backoff with jitter
   │
-  o  2d6999d80d  Today at 08:05  junz
+  o  50faf770f4  Yesterday at 14:26  junz
 ╭─╯  Extract retry policy into its own module
 │
-o  7582005a1c  Yesterday at 16:45  junz  origin/master
+o  5c4369ce49  Wednesday at 14:26  junz  origin/master
 │  Bump dependencies
 │
-o  a7b65c2438  Yesterday at 09:30
+o  2c8c874b9c  Monday at 14:26
 │
 │
-o  91eb0d1793  Wednesday at 14:20  junz
+o  91eb0d1793  Jun 05 at 09:30  junz
 │  Add config loader and defaults
 ~
 ```
@@ -82,21 +82,26 @@ equivalent, so the output no longer mirrors `sl`
 (see [Differences](#differences-from-saplings-sl)):
 
 ```text
-$ git smartlog -u
-  @  Uncommitted changes  4 files, +20 -17
-  │  A config.yaml    |  5 +++++
-  │  M http_client.go | 18 ++++++++++++++----
-  │  D legacy_api.go  | 12 ------------
-  │  S vendor/sdk     |  2 +-
+$ git smartlog -u -n 2
+  @  Uncommitted changes  3 files, +17 -2
+  │  M http_client.go | 2 +-
+  │  M retry.go       | 8 +++++++-
+  │  A retry_test.go  | 9 +++++++++
   │
-  o  23de132889  14 minutes ago  junz
+  o  b82a2561e9  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  a8d1958eb9  Today at 10:30  junz
-╭─╯  Add exponential backoff with jitter
+  o  98f650bc74  Today at 11:26  junz
+  │  Add exponential backoff with jitter
+  │
+  o  50faf770f4  Yesterday at 14:26  junz
+╭─╯  Extract retry policy into its own module
 │
-o  7582005a1c  Yesterday at 16:45  junz  origin/master
+o  5c4369ce49  Wednesday at 14:26  junz  origin/master
 │  Bump dependencies
+│
+o  2c8c874b9c  Monday at 14:26
+│
 ~
 ```
 
@@ -162,11 +167,10 @@ usage: git-smartstat [--color WHEN]
 
 ```text
 $ git smartstat
-4 files, +20 -17
- A config.yaml    |  5 +++++
- M http_client.go | 18 ++++++++++++++----
- D legacy_api.go  | 12 ------------
- S vendor/sdk     |  2 +-
+3 files, +17 -2
+ M http_client.go | 2 +-
+ M retry.go       | 8 +++++++-
+ A retry_test.go  | 9 +++++++++
 ```
 
 It prints nothing when the working tree is clean. Both names share one in-file

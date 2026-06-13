@@ -69,14 +69,17 @@ o  91eb0d1793  Wednesday at 14:20  junz
 
 With `-u` / `--uncommitted`, a synthetic **Uncommitted changes** node is drawn on
 top of `HEAD` whenever the working tree is dirty: compact totals in the header,
-per-file `git diff --stat HEAD` bars in the body. The `@` marker moves to it —
-that's where the working copy is — and `HEAD` drops to an `o` (keeping its author
-and subject). This is a git-smartlog extension with no Sapling equivalent, so the
-output no longer mirrors `sl` (see [Differences](#differences-from-saplings-sl)):
+per-file `git diff --stat HEAD` bars in the body. Untracked files are folded into
+both (as new-file additions) via a throwaway index overlay, so they appear without
+touching the real index. The `@` marker moves to it — that's where the working
+copy is — and `HEAD` drops to an `o` (keeping its author and subject). This is a
+git-smartlog extension with no Sapling equivalent, so the output no longer mirrors
+`sl` (see [Differences](#differences-from-saplings-sl)):
 
 ```text
 $ git smartlog -u
-  @  Uncommitted changes  2 files, +26 -4
+  @  Uncommitted changes  3 files, +31 -4
+  │ config.yaml    |  5 +++++
   │ http_client.go | 18 ++++++++++++++----
   │ retry.go       | 12 ++++++++++++
   │
@@ -140,8 +143,9 @@ usage: git-smartlog [-u] [-n N] [--base REV]
 - **Drafts** — first-parent commits in `HEAD ^base`, newest first.
 - **Uncommitted changes** — with `-u`/`--uncommitted`, when `git status` is
   non-empty, a synthetic node on top of `HEAD`: compact totals in the header
-  (`git diff --shortstat` plus the untracked-file count), per-file
-  `git diff --stat HEAD` bars in the body; the `@` marker moves there.
+  (`git diff --shortstat`) and per-file `git diff --stat HEAD` bars in the body,
+  both computed against a throwaway index overlay that intent-to-adds untracked
+  files so they're folded in without mutating the repo; the `@` marker moves there.
 - **Public window** — `-n` commits starting at the base.
 - **Relative time** — mirrors Sapling's `smartdate`: `age()` ("N minutes ago")
   within 90 minutes, calendar-day `simpledate()` ("Yesterday", "Mon DD", …)

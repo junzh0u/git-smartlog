@@ -35,11 +35,14 @@
 #   - Symbol: @ for HEAD, o otherwise
 #   - Uncommitted changes (opt-in via -u/--uncommitted): when the working tree is
 #     dirty, a synthetic "Uncommitted changes" node is drawn on top of HEAD. Its
-#     header carries compact
-#     totals ("2 files, +69 -2", untracked files included); its body is the per-file
-#     bars from `git diff --stat HEAD` (the stat's own trailing total is dropped,
-#     since it lives in the header). The @ marker moves to it — that's where the
-#     working copy is — and HEAD drops to o (but keeps its author/subject).
+#     header carries compact totals ("2 files, +69 -2"); its body is the per-file
+#     bars from `git diff --stat HEAD`, with the stat's own trailing total dropped
+#     (it lives in the header). Untracked files are folded into BOTH the totals and
+#     the body via a throwaway index overlay (`git add -N` against a copy of the
+#     index), so they show as new-file additions without touching the real index;
+#     count and line totals come from that same diff, so header always matches body.
+#     The @ marker moves to the node — that's where the working copy is — and HEAD
+#     drops to o (but keeps its author/subject).
 #   - Author: %al (email local-part, e.g. "junz")
 #   - Refs: %D filtered to remote bookmarks plus the active local branch, shown
 #     with a trailing "*" like sapling's active bookmark — but only when no remote
@@ -330,14 +333,34 @@ function main {
     (( ${#ARG_UNCOMMITTED} )) && porcelain=$(git status --porcelain 2>/dev/null)
     if [[ -n $porcelain ]]; then
         has_changes=1
-        # Compact totals for the header line (counts untracked files too).
-        local -a status_lines=("${(@f)porcelain}")
-        local n_files=${#status_lines} file_word=files
-        (( n_files == 1 )) && file_word=file
-        local shortstat ins=0 del=0
-        shortstat=$(git diff --shortstat HEAD 2>/dev/null)
+        # `git diff HEAD` only sees tracked paths, so untracked files would be
+        # missing from both the +/- totals and the per-file body. To fold them in
+        # WITHOUT mutating the repo, copy the index to a throwaway file and
+        # `git add -N` (intent-to-add) the untracked paths there: against that temp
+        # index, `git diff HEAD` renders each untracked file as a new file with its
+        # lines as additions, aligned with the tracked entries. GIT_INDEX_FILE keeps
+        # the real index and working tree untouched. With no untracked files,
+        # stat_index just points at the real index — a no-op.
+        local untracked_raw=$(git ls-files --others --exclude-standard 2>/dev/null)
+        local stat_index=$(git rev-parse --git-path index 2>/dev/null)
+        local tmp_index=
+        if [[ -n $untracked_raw ]]; then
+            local -a untracked=("${(@f)untracked_raw}")
+            tmp_index=$(mktemp)
+            [[ -f $stat_index ]] && cp "$stat_index" "$tmp_index"
+            GIT_INDEX_FILE=$tmp_index git add -N -- "${untracked[@]}" 2>/dev/null
+            stat_index=$tmp_index
+        fi
+        # Compact totals for the header line. File count AND line totals come from
+        # the same overlay diff, so the header always agrees with the body below
+        # (an untracked directory expands to its individual files in both).
+        local shortstat n_files=0 ins=0 del=0
+        shortstat=$(GIT_INDEX_FILE=$stat_index git diff --shortstat HEAD 2>/dev/null)
+        [[ $shortstat =~ '([0-9]+) files? changed' ]] && n_files=$match[1]
         [[ $shortstat =~ '([0-9]+) insertion' ]] && ins=$match[1]
         [[ $shortstat =~ '([0-9]+) deletion' ]] && del=$match[1]
+        local file_word=files
+        (( n_files == 1 )) && file_word=file
         wdir_summary="${n_files} ${file_word}"
         (( ins > 0 || del > 0 )) && wdir_summary+=", +${ins} -${del}"
         # Per-file body from `git diff --stat HEAD`, minus its trailing summary line
@@ -347,8 +370,9 @@ function main {
         # color (matching the same TTY/NO_COLOR test as the C_* palette below).
         local stat_color=--color=never
         [[ -t 1 && -z $NO_COLOR ]] && stat_color=--color=always
-        wdir_stat=("${(@f)$(git diff $stat_color --stat HEAD 2>/dev/null)}")
+        wdir_stat=("${(@f)$(GIT_INDEX_FILE=$stat_index git diff $stat_color --stat HEAD 2>/dev/null)}")
         (( ${#wdir_stat} > 0 )) && wdir_stat=("${(@)wdir_stat[1,-2]}")
+        [[ -n $tmp_index ]] && rm -f "$tmp_index"
     fi
 
     local -a drafts publics

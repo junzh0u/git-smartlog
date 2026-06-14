@@ -53,9 +53,10 @@
 #     `git diff --raw`, plus porcelain for conflicts): A added, ? untracked,
 #     M modified, D deleted, R renamed, T typechange, S submodule, U unmerged;
 #     marker and name are colored by kind (see the Colors note below), and an
-#     executable-bit flip gets a trailing +x/-x hint. The @ marker moves to the
-#     node — that's where the working copy is — and HEAD drops to o (keeps
-#     author/subject).
+#     executable-bit flip gets a trailing +x/-x hint. The body is grouped by marker
+#     in that order (A ? M D R T S U), alphabetical within each group. The @ marker
+#     moves to the node — that's where the working copy is — and HEAD drops to o
+#     (keeps author/subject).
 #   - Author: %al (email local-part, e.g. "junz")
 #   - Refs: %D filtered to remote bookmarks plus the active local branch, shown
 #     with a trailing "*" like sapling's active bookmark — but only when no remote
@@ -432,12 +433,15 @@ function uncommitted_stat {
 
             if (( ${#wdir_mark} )); then
                 local creset=$'\e[0m'
-                local -a marked=()
-                local sline= before= after= lead= body= trail= nf= mark= col= hint= cp=
+                # Render each line, tagging it with a signal rank; then re-emit the
+                # body grouped by rank (A ? M D R T S U, then anything else) so the
+                # colors cluster, keeping git's alphabetical order within each group.
+                local -a r_line=() r_rank=()
+                local sline= before= after= lead= body= trail= nf= mark= col= hint= cp= rank= rendered=
                 for sline in $STAT_BODY; do
                     before=${sline%%\|*}            # " name<pad> " up to the first '|'
                     if [[ $before == $sline ]]; then
-                        marked+=("$sline"); continue   # no '|' (shouldn't happen): keep
+                        r_line+=("$sline"); r_rank+=(9); continue   # no '|': keep, sort last
                     fi
                     after=${sline#"$before"}        # "| graph..." with git's colors
                     lead=${before%%[! ]*}           # leading spaces
@@ -465,10 +469,29 @@ function uncommitted_stat {
                     # Dim the mode hint so it reads as a subordinate annotation.
                     (( color_on )) && [[ -n $hint ]] && hint=$'\e[2m'"${hint}${creset}"
                     if (( color_on )) && [[ -n $col ]]; then
-                        marked+=("${lead}${col}${mark}${creset} ${col}${nf}${creset}${trail}${after}${hint}")
+                        rendered="${lead}${col}${mark}${creset} ${col}${nf}${creset}${trail}${after}${hint}"
                     else
-                        marked+=("${lead}${mark} ${nf}${trail}${after}${hint}")
+                        rendered="${lead}${mark} ${nf}${trail}${after}${hint}"
                     fi
+                    case $mark in
+                        A)   rank=1 ;;
+                        '?') rank=2 ;;
+                        M)   rank=3 ;;
+                        D)   rank=4 ;;
+                        R|C) rank=5 ;;
+                        T)   rank=6 ;;
+                        S)   rank=7 ;;
+                        U)   rank=8 ;;
+                        *)   rank=9 ;;
+                    esac
+                    r_line+=("$rendered"); r_rank+=("$rank")
+                done
+                local -a marked=()
+                local g= i=
+                for g in 1 2 3 4 5 6 7 8 9; do
+                    for ((i = 1; i <= ${#r_line}; i++)); do
+                        [[ ${r_rank[i]} == $g ]] && marked+=("${r_line[i]}")
+                    done
                 done
                 STAT_BODY=("${marked[@]}")
             fi

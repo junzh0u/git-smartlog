@@ -74,7 +74,8 @@ per-file `git diff --stat HEAD` bars in the body. Untracked files are folded int
 both (as new-file additions) via a throwaway index overlay, so they appear without
 touching the real index. Each body filename is prefixed with a one-letter change
 marker, and both marker and name are color-coded by kind, on top of git's usual
-green/red `+`/`-` bars:
+green/red `+`/`-` bars. The body is **grouped by marker**, in the order below
+(alphabetical within each group):
 
 | marker | meaning | color |
 | :-: | --- | --- |
@@ -96,14 +97,14 @@ git-smartlog extension with no Sapling equivalent, so the output no longer mirro
 ```text
 $ git smartlog -u -n 2
   @  Uncommitted changes  10 files, +30 -13
-  │  T config.json          | 5 +----
+  │  A metrics.go           | 7 +++++++
+  │  ? retry_test.go        | 9 +++++++++
   │  M http_client.go       | 2 +-
+  │  M retry.go             | 8 +++++++-
+  │  M scripts/release.sh   | 0 +x
   │  D legacy.go            | 6 ------
   │  R logging.go => log.go | 0
-  │  A metrics.go           | 7 +++++++
-  │  M retry.go             | 8 +++++++-
-  │  ? retry_test.go        | 9 +++++++++
-  │  M scripts/release.sh   | 0 +x
+  │  T config.json          | 5 +----
   │  S vendor/timeutil      | 2 +-
   │  U version.go           | 4 ++++
   │
@@ -187,14 +188,14 @@ usage: git-smartstat [--color WHEN]
 ```text
 $ git smartstat
 10 files, +30 -13
- T config.json          | 5 +----
+ A metrics.go           | 7 +++++++
+ ? retry_test.go        | 9 +++++++++
  M http_client.go       | 2 +-
+ M retry.go             | 8 +++++++-
+ M scripts/release.sh   | 0 +x
  D legacy.go            | 6 ------
  R logging.go => log.go | 0
- A metrics.go           | 7 +++++++
- M retry.go             | 8 +++++++-
- ? retry_test.go        | 9 +++++++++
- M scripts/release.sh   | 0 +x
+ T config.json          | 5 +----
  S vendor/timeutil      | 2 +-
  U version.go           | 4 ++++
 ```

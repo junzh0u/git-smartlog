@@ -200,6 +200,10 @@ $ git smartstat
  U version.go           | 4 ++++
 ```
 
+<p align="center">
+  <img src="smartstat.png" alt="git smartstat output, color-coded by change kind" width="560">
+</p>
+
 It prints nothing when the working tree is clean. Both names share one in-file
 function (`uncommitted_stat`), so there's no duplicated logic and `git-smartlog`
 stays a single self-contained file — `-u` needs nothing external. (Standalone,

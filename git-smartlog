@@ -335,9 +335,12 @@ function uncommitted_stat {
         elif [[ -n $COLUMNS ]] && (( COLUMNS >= 20 )); then
             stat_width=$COLUMNS
         fi
-        # Leave room for the caller's per-line prefix (the -u node indents the body
-        # by "  │ "); piped output has no terminal to overflow, so it keeps 80.
-        (( stat_width -= reserve ))
+        # Shrink the width git is told to use so the assembled line fits the real
+        # terminal: reserve the caller's per-line prefix (the -u node indents the
+        # body by "  │ ") plus the 2-column change marker ("? ") this function adds
+        # to every git --stat line. Piped output has no terminal to overflow, so it
+        # keeps 80.
+        (( stat_width -= reserve + 2 ))
         (( stat_width < 20 )) && stat_width=20
     fi
 
@@ -437,7 +440,8 @@ function uncommitted_stat {
             for bl in $STAT_BODY; do
                 [[ $bl == *\|* ]] || continue
                 bcol=${bl%%\|*}; (( ${#bcol} > gitcol )) && gitcol=${#bcol}
-                aft=${(S)${bl#*\|}//$'\e['*m/}; (( ${#aft} > maxafter )) && maxafter=${#aft}
+                aft=${(S)${bl#"$bcol"}//$'\e['*m/}   # "| graph" incl '|', ANSI stripped
+                (( ${#aft} > maxafter )) && maxafter=${#aft}
             done
             local avail=0
             for d in $untracked_dirs; do (( ${#d} > avail )) && avail=${#d}; done
@@ -538,11 +542,11 @@ function uncommitted_stat {
 
             if (( ${#wdir_mark} )); then
                 local creset=$'\e[0m'
-                # Render each line, tagging it with a signal rank and its filename;
-                # then re-emit the body grouped by rank (A ? M D R T S U, then anything
-                # else) so the colors cluster, sorting by filename within each group.
+                # Render each line, tagging it with a signal rank and a full-path sort
+                # key; then re-emit the body grouped by rank (A ? M D R T S U, then
+                # anything else) so the colors cluster, sorted by path within each group.
                 local -a r_line=() r_rank=() r_name=()
-                local sline= before= after= lead= body= trail= nf= mark= col= hint= cp= rank= rendered= tw= sp=
+                local sline= before= after= lead= body= trail= nf= mark= col= hint= cp= rank= rendered= tw= sp= skey=
                 for sline in $STAT_BODY; do
                     before=${sline%%\|*}            # " name<pad> " up to the first '|'
                     if [[ $before == $sline ]]; then
@@ -558,6 +562,9 @@ function uncommitted_stat {
                         (( tw < 1 )) && tw=1            # git's own names) and the git
                         trail=${(l:$tw:)sp}            # lines keep one aligned '|'
                     fi
+                    # Sort key: the FULL path, so a name git truncated to "...tail" (or
+                    # a collapsed dir) still sorts in git's order, not by its "...".
+                    skey=${wdir_sortkey[$nf]:-$nf}
                     mark=${wdir_mark[$nf]}
                     col=${wdir_col[$nf]}
                     hint=${wdir_hint[$nf]}
@@ -570,6 +577,7 @@ function uncommitted_stat {
                                     mark=${wdir_mark[$cp]}
                                     col=${wdir_col[$cp]}
                                     hint=${wdir_hint[$cp]}
+                                    skey=$cp           # full path for the sort key
                                     break
                                 fi
                             done
@@ -594,7 +602,7 @@ function uncommitted_stat {
                         U)   rank=8 ;;
                         *)   rank=9 ;;
                     esac
-                    r_line+=("$rendered"); r_rank+=("$rank"); r_name+=("${wdir_sortkey[$nf]:-$nf}")
+                    r_line+=("$rendered"); r_rank+=("$rank"); r_name+=("$skey")
                 done
                 # Order within a rank by filename in C/byte order, matching how git
                 # sorts `git status` / `git diff --stat`. LC_COLLATE=C avoids locale

@@ -70,12 +70,14 @@ o  91eb0d1793  Jun 05 at 09:30  junz
 
 With `-u` / `--uncommitted`, a synthetic **Uncommitted changes** node is drawn on
 top of `HEAD` whenever the working tree is dirty: compact totals in the header,
-per-file `git diff --stat HEAD` bars in the body. Untracked files are folded into
-both (as new-file additions) via a throwaway index overlay, so they appear without
-touching the real index. Each body filename is prefixed with a one-letter change
-marker, and both marker and name are color-coded by kind, on top of git's usual
-green/red `+`/`-` bars. The body is **grouped by marker**, in the order below
-(alphabetical within each group):
+per-file `git diff --stat HEAD` bars in the body. Loose untracked files are folded
+into both (as new-file additions) via a throwaway index overlay, so they appear
+without touching the real index; a **wholly-untracked directory collapses to a
+single `dir/ | N files` entry** instead of expanding to every file inside it, just
+like `git status`. Each body filename is prefixed with a one-letter change marker,
+and both marker and name are color-coded by kind, on top of git's usual green/red
+`+`/`-` bars. The body is **grouped by marker**, in the order below (sorted by path
+within each group, matching `git status`):
 
 | marker | meaning | color |
 | :-: | --- | --- |
@@ -204,6 +206,17 @@ $ git smartstat
   <img src="smartstat.png" alt="git smartstat output, color-coded by change kind" width="560">
 </p>
 
+Wholly-untracked directories collapse to a single entry — the way `git status`
+lists a new directory — with a file count in place of the `+`/`-` graph:
+
+```text
+$ git smartstat
+3 files, +2 -0
+ ? .cache/   | 2 files
+ ? notes.txt | 1 +
+ M app.py    | 1 +
+```
+
 It prints nothing when the working tree is clean. Both names share one in-file
 function (`uncommitted_stat`), so there's no duplicated logic and `git-smartlog`
 stays a single self-contained file — `-u` needs nothing external. (Standalone,
@@ -221,8 +234,10 @@ empty tree so staged and untracked files still show as additions.)
 - **Uncommitted changes** — with `-u`/`--uncommitted`, when `git status` is
   non-empty, a synthetic node on top of `HEAD`: compact totals in the header
   (`git diff --shortstat`) and per-file `git diff --stat HEAD` bars in the body,
-  both computed against a throwaway index overlay that intent-to-adds untracked
-  files so they're folded in without mutating the repo. Each body filename gets a
+  both computed against a throwaway index overlay that intent-to-adds loose
+  untracked files so they're folded in without mutating the repo (a wholly-untracked
+  directory instead collapses to one `dir/ | N files` entry, like `git status`).
+  Each body filename gets a
   one-letter change marker (`A`/`?`/`M`/`D`/`R`/`T`/`S`/`U`, from `git diff --raw`,
   plus the porcelain status for conflicts) colored by kind (see the `-u` table
   above), and a `+x`/`-x` hint on executable-bit flips; the `@`

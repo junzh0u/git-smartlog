@@ -45,10 +45,13 @@
 #     dirty, a synthetic "Uncommitted changes" node is drawn on top of HEAD. Its
 #     header carries compact totals ("2 files, +69 -2"); its body is the per-file
 #     bars from `git diff --stat HEAD`, with the stat's own trailing total dropped
-#     (it lives in the header). Untracked files are folded into BOTH the totals and
-#     the body via a throwaway index overlay (`git add -N` against a copy of the
-#     index), so they show as new-file additions without touching the real index;
-#     count and line totals come from that same diff, so header always matches body.
+#     (it lives in the header). Loose untracked files are folded into BOTH the
+#     totals and the body via a throwaway index overlay (`git add -N` against a copy
+#     of the index), so they show as new-file additions without touching the real
+#     index. A wholly-untracked directory is NOT expanded: like `git status` it
+#     collapses to a single "dir/ | N files" body line — counted as one file in the
+#     totals, contributing no +/- lines. The header still matches the body: one
+#     counted entry per body line.
 #     Each body filename is prefixed with a one-letter change marker (from
 #     `git diff --raw`, plus porcelain for conflicts): A added, ? untracked,
 #     M modified, D deleted, R renamed, T typechange, S submodule, U unmerged;
@@ -132,8 +135,9 @@ function smartstat_usage {
     print -r -- "usage: $PROG [--color WHEN]
 
 Show uncommitted working-tree changes as a compact stat block: a summary line
-(\"2 files, +69 -2\") followed by per-file diff bars, with untracked files folded
-in. Each name carries a change marker — A added, ? untracked, M modified,
+(\"2 files, +69 -2\") followed by per-file diff bars; loose untracked files are
+folded in and wholly-untracked directories collapse to a single entry like git
+status. Each name carries a change marker — A added, ? untracked, M modified,
 D deleted, R renamed, T typechange, S submodule, U unmerged — colored by kind.
 Prints nothing when the working tree is clean. The same block git-smartlog -u draws.
 
@@ -323,34 +327,49 @@ function uncommitted_stat {
     git rev-parse --verify --quiet HEAD >/dev/null 2>&1 ||
         diff_target=4b825dc642cb6eb9a060e54bf8d69288fbee4904
 
-    # `git diff` only sees tracked paths, so untracked files would be missing from
-    # both the +/- totals and the per-file body. To fold them in WITHOUT mutating
-    # the repo, copy the index to a throwaway file and `git add -N` (intent-to-add)
-    # the untracked paths there: against that temp index, `git diff` renders each
-    # untracked file as a new file with its lines as additions, aligned with the
-    # tracked entries. GIT_INDEX_FILE keeps the real index and working tree
-    # untouched. With no untracked files, stat_index points at the real index — a
-    # no-op. The temp index is removed via `always`, even on an early error.
-    local untracked_raw=$(git ls-files --others --exclude-standard 2>/dev/null)
+    # Untracked entries via `git ls-files --directory`: a wholly-untracked directory
+    # folds to ONE 'dir/' entry (mirroring `git status`), while loose untracked files
+    # (under a dir that also holds tracked paths) appear individually. Unlike `git
+    # status --porcelain`, ls-files does not C-quote paths that merely contain spaces,
+    # so spaced names survive intact (non-ASCII still quotes — a pre-existing limit).
+    # Only loose files are intent-added to the overlay below, so each untracked dir
+    # renders as a single "dir/ | N files" line instead of expanding to every file.
+    local -a untracked_files=() untracked_dirs=()
+    local ue=
+    for ue in ${(f)"$(git ls-files --others --exclude-standard --directory --no-empty-directory 2>/dev/null)"}; do
+        if [[ $ue == */ ]]; then untracked_dirs+=("$ue"); else untracked_files+=("$ue"); fi
+    done
+
     local stat_index=$(git rev-parse --git-path index 2>/dev/null)
     local tmp_index=
     {
-        if [[ -n $untracked_raw ]]; then
-            local -a untracked=("${(@f)untracked_raw}")
+        # `git diff` only sees tracked paths, so loose untracked files would be
+        # missing from the +/- totals and the body. Fold them in WITHOUT mutating
+        # the repo: copy the index to a throwaway file and `git add -N` (intent-to-
+        # add) the loose paths there; against that temp index `git diff` renders each
+        # as a new file with its lines as additions, aligned with the tracked
+        # entries. GIT_INDEX_FILE keeps the real index and working tree untouched.
+        # With no loose untracked files, stat_index points at the real index — a
+        # no-op. The temp index is removed via `always`, even on an early error.
+        if (( ${#untracked_files} )); then
             tmp_index=$(mktemp) || die "cannot create temp index"
             [[ -f $stat_index ]] && cp "$stat_index" "$tmp_index"
-            GIT_INDEX_FILE=$tmp_index git add -N -- "${untracked[@]}" 2>/dev/null
+            GIT_INDEX_FILE=$tmp_index git add -N -- "${untracked_files[@]}" 2>/dev/null
             stat_index=$tmp_index
         fi
 
-        # Compact totals for the summary line. File count AND line totals come from
-        # the same overlay diff, so the summary always agrees with the body below
-        # (an untracked directory expands to its individual files in both).
+        # Compact totals for the summary line. File count and +/- line totals come
+        # from the overlay diff (tracked changes + loose untracked files); each
+        # collapsed untracked directory is then counted as one more "file" (its
+        # contents aren't diffed, so it adds nothing to the +/- line totals — its
+        # body line shows a file count instead). The summary still matches the body:
+        # one counted entry per body line.
         local shortstat n_files=0 ins=0 del=0
         shortstat=$(GIT_INDEX_FILE=$stat_index git diff --shortstat $diff_target 2>/dev/null)
         [[ $shortstat =~ '([0-9]+) files? changed' ]] && n_files=$match[1]
         [[ $shortstat =~ '([0-9]+) insertion' ]] && ins=$match[1]
         [[ $shortstat =~ '([0-9]+) deletion' ]] && del=$match[1]
+        (( n_files += ${#untracked_dirs} ))
         local file_word=files
         (( n_files == 1 )) && file_word=file
         STAT_SUMMARY="${n_files} ${file_word}"
@@ -364,6 +383,55 @@ function uncommitted_stat {
         (( color_on )) && stat_color=--color=always
         STAT_BODY=("${(@f)$(GIT_INDEX_FILE=$stat_index git diff $stat_color --stat $diff_target 2>/dev/null)}")
         (( ${#STAT_BODY} > 0 )) && STAT_BODY=("${(@)STAT_BODY[1,-2]}")
+
+        # Marker/color maps per body filename. Declared up here (not inside the
+        # classification block) so the synthetic untracked-dir lines appended next
+        # can register their '?' marker even when there are no tracked/loose lines.
+        # wdir_sortkey overrides the within-group sort key for an entry whose display
+        # name is truncated — collapsed dirs key on their FULL path so they sort in
+        # `git status` order, not clustered by their leading "...".
+        local -A wdir_mark wdir_col wdir_hint wdir_sortkey
+
+        # One synthetic stat line per collapsed untracked dir: "dir/ | N files".
+        # git left-justifies names to a fixed width and aligns every '|', so borrow
+        # that column from any existing body line; with no git lines to borrow from,
+        # size the column to the longest dir name (capped). Over-long names are
+        # truncated head-first ("...tail") like git, so the '|' stays aligned. Each
+        # dir registers a '?' marker, so it groups/sorts with the loose untracked
+        # files (dim green, '?' rank) in the render pass below.
+        if (( ${#untracked_dirs} )); then
+            local gitcol=0 bl= bcol= d=
+            for bl in $STAT_BODY; do
+                if [[ $bl == *\|* ]]; then bcol=${bl%%\|*}; gitcol=${#bcol}; break; fi
+            done
+            local avail=0
+            if (( gitcol > 2 )); then
+                avail=$(( gitcol - 2 ))
+            else
+                for d in $untracked_dirs; do (( ${#d} > avail )) && avail=${#d}; done
+                (( avail > 64 )) && avail=64
+            fi
+            (( avail < 4 )) && avail=4
+            # File counts come from the full recursive untracked list.
+            local -a all_untracked=(${(f)"$(git ls-files --others --exclude-standard 2>/dev/null)"})
+            local disp= n= word= f= nsp= pad= keep=
+            for d in $untracked_dirs; do
+                disp=$d
+                if (( ${#disp} > avail )); then
+                    keep=$(( avail - 3 )); disp="...${disp[-keep,-1]}"
+                fi
+                n=0
+                for f in $all_untracked; do [[ ${f[1,${#d}]} == "$d" ]] && (( n++ )); done
+                word=files; (( n == 1 )) && word=file
+                nsp=$(( avail - ${#disp} )); pad=
+                (( nsp > 0 )) && pad=${(l:$nsp:)pad}
+                STAT_BODY+=(" ${disp}${pad} | ${n} ${word}")
+                wdir_mark[$disp]='?'
+                wdir_col[$disp]=$'\e[2;32m'
+                wdir_hint[$disp]=
+                wdir_sortkey[$disp]=$d
+            done
+        fi
 
         # Prefix each body filename with a one-letter change marker, classified from
         # `git diff --raw` against the same overlay, and color-code both marker and
@@ -381,12 +449,11 @@ function uncommitted_stat {
         # renames show as "old => new" (no raw path match) so are flagged R via that
         # arrow; an unmatched line falls back to a blank marker (alignment preserved).
         if (( ${#STAT_BODY} )); then
-            local -A wdir_mark wdir_col wdir_hint
-            # Untracked paths were intent-to-added into the overlay, so `git diff`
-            # reports them as A like a staged-new file; this set re-splits them as ?.
+            # Loose untracked paths were intent-to-added into the overlay, so `git
+            # diff` reports them as A like a staged-new file; re-split them as ?.
             local -A is_untracked
             local u
-            for u in ${(f)untracked_raw}; do is_untracked[$u]=1; done
+            for u in $untracked_files; do is_untracked[$u]=1; done
             # Conflicted paths show as plain M in `git diff --raw`, so take the
             # unmerged set from porcelain status codes (DD/AU/UD/UA/DU/AA/UU) instead.
             local -A is_unmerged
@@ -433,15 +500,15 @@ function uncommitted_stat {
 
             if (( ${#wdir_mark} )); then
                 local creset=$'\e[0m'
-                # Render each line, tagging it with a signal rank; then re-emit the
-                # body grouped by rank (A ? M D R T S U, then anything else) so the
-                # colors cluster, keeping git's alphabetical order within each group.
-                local -a r_line=() r_rank=()
+                # Render each line, tagging it with a signal rank and its filename;
+                # then re-emit the body grouped by rank (A ? M D R T S U, then anything
+                # else) so the colors cluster, sorting by filename within each group.
+                local -a r_line=() r_rank=() r_name=()
                 local sline= before= after= lead= body= trail= nf= mark= col= hint= cp= rank= rendered=
                 for sline in $STAT_BODY; do
                     before=${sline%%\|*}            # " name<pad> " up to the first '|'
                     if [[ $before == $sline ]]; then
-                        r_line+=("$sline"); r_rank+=(9); continue   # no '|': keep, sort last
+                        r_line+=("$sline"); r_rank+=(9); r_name+=("$sline"); continue   # no '|': keep, sort last
                     fi
                     after=${sline#"$before"}        # "| graph..." with git's colors
                     lead=${before%%[! ]*}           # leading spaces
@@ -484,13 +551,26 @@ function uncommitted_stat {
                         U)   rank=8 ;;
                         *)   rank=9 ;;
                     esac
-                    r_line+=("$rendered"); r_rank+=("$rank")
+                    r_line+=("$rendered"); r_rank+=("$rank"); r_name+=("${wdir_sortkey[$nf]:-$nf}")
                 done
+                # Order within a rank by filename in C/byte order, matching how git
+                # sorts `git status` / `git diff --stat`. LC_COLLATE=C avoids locale
+                # collation (which would sort e.g. 'g' before 'P' or mishandle
+                # punctuation); it's a function-local, restored on return.
+                local LC_COLLATE=C
                 local -a marked=()
                 local g= i=
                 for g in 1 2 3 4 5 6 7 8 9; do
+                    # Key each line with its (full-path) sort name plus a tab, sort,
+                    # then strip the key back off.
+                    local -a group=()
                     for ((i = 1; i <= ${#r_line}; i++)); do
-                        [[ ${r_rank[i]} == $g ]] && marked+=("${r_line[i]}")
+                        [[ ${r_rank[i]} == $g ]] && group+=("${r_name[i]}"$'\t'"${r_line[i]}")
+                    done
+                    group=("${(o)group[@]}")
+                    local entry=
+                    for entry in $group; do
+                        marked+=("${entry#*$'\t'}")
                     done
                 done
                 STAT_BODY=("${marked[@]}")

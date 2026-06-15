@@ -217,6 +217,10 @@ $ git smartstat
  M app.py    | 1 +
 ```
 
+Paths are shown in full up to your terminal width; like `git diff --stat`, they
+shorten to a leading `...tail` only when the terminal is too narrow to fit them
+(piped output uses git's 80-column default).
+
 It prints nothing when the working tree is clean. Both names share one in-file
 function (`uncommitted_stat`), so there's no duplicated logic and `git-smartlog`
 stays a single self-contained file — `-u` needs nothing external. (Standalone,

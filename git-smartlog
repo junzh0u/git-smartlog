@@ -313,9 +313,33 @@ function uncommitted_stat {
     # when color_on, colored). Reads the working tree only; never mutates the real
     # index. Shared by `git-smartlog -u` and standalone `git-smartstat`.
     local color_on=$1
+    local reserve=${2:-0}   # columns the caller will prepend to each body line
     STAT_HAS_CHANGES=0
     STAT_SUMMARY=
     STAT_BODY=()
+
+    # Width for the `git diff --stat` body. It's captured via $(...) below, so git
+    # sees a pipe and would pin to its 80-column non-TTY default — truncating long
+    # paths to "...tail" no matter how wide the real terminal is. When OUR stdout is
+    # a terminal, probe its width and pass it through, so paths show in full when
+    # there's room; git still truncates to fit a narrow terminal. Piped output stays
+    # at 80, keeping captures stable. The width comes from the controlling terminal
+    # (`stty size </dev/tty`) — not `<&1`, which inside $(...) is the capture pipe,
+    # not the tty — with $COLUMNS as a fallback.
+    local stat_width=80
+    if [[ -t 1 ]]; then
+        local termsize=
+        termsize=$(stty size </dev/tty 2>/dev/null)   # "rows cols"
+        if [[ $termsize == <->" "<-> ]]; then
+            stat_width=${termsize##* }
+        elif [[ -n $COLUMNS ]] && (( COLUMNS >= 20 )); then
+            stat_width=$COLUMNS
+        fi
+        # Leave room for the caller's per-line prefix (the -u node indents the body
+        # by "  │ "); piped output has no terminal to overflow, so it keeps 80.
+        (( stat_width -= reserve ))
+        (( stat_width < 20 )) && stat_width=20
+    fi
 
     local porcelain=$(git status --porcelain 2>/dev/null)
     [[ -z $porcelain ]] && return
@@ -376,12 +400,13 @@ function uncommitted_stat {
         (( ins > 0 || del > 0 )) && STAT_SUMMARY+=", +${ins} -${del}"
 
         # Per-file body from `git diff --stat`, minus its trailing summary line
-        # (those totals already sit in the summary). Captured via $(...) so git uses
-        # its stable non-TTY default width regardless of the caller's terminal —
-        # which also strips its color, so force it back on when color_on.
+        # (those totals already sit in the summary). Width is forced to stat_width
+        # (terminal width, or 80 when piped — see above) since the $(...) capture
+        # hides the real terminal from git. The capture also strips git's color, so
+        # force it back on when color_on.
         local stat_color=--color=never
         (( color_on )) && stat_color=--color=always
-        STAT_BODY=("${(@f)$(GIT_INDEX_FILE=$stat_index git diff $stat_color --stat $diff_target 2>/dev/null)}")
+        STAT_BODY=("${(@f)$(GIT_INDEX_FILE=$stat_index git diff $stat_color --stat=$stat_width $diff_target 2>/dev/null)}")
         (( ${#STAT_BODY} > 0 )) && STAT_BODY=("${(@)STAT_BODY[1,-2]}")
 
         # Marker/color maps per body filename. Declared up here (not inside the
@@ -391,27 +416,40 @@ function uncommitted_stat {
         # name is truncated — collapsed dirs key on their FULL path so they sort in
         # `git status` order, not clustered by their leading "...".
         local -A wdir_mark wdir_col wdir_hint wdir_sortkey
+        # Shared name-column width for the body. 0 means "leave git's own alignment"
+        # (no untracked dirs); when dirs exist it's set below and re-pads git lines in
+        # the render pass so every '|' stays aligned.
+        local name_w=0
 
         # One synthetic stat line per collapsed untracked dir: "dir/ | N files".
-        # git left-justifies names to a fixed width and aligns every '|', so borrow
-        # that column from any existing body line; with no git lines to borrow from,
-        # size the column to the longest dir name (capped). Over-long names are
-        # truncated head-first ("...tail") like git, so the '|' stays aligned. Each
-        # dir registers a '?' marker, so it groups/sorts with the loose untracked
+        # git sizes its name column to the tracked/loose names only, so a longer dir
+        # name would have to truncate to fit it. Instead, grow the shared column to
+        # the longest entry (file OR dir) and re-pad the git lines, so dirs show in
+        # full when the terminal has room. The growth is capped so the longest line
+        # still fits stat_width; names past the cap truncate head-first ("...tail").
+        # Each dir registers a '?' marker, so it groups/sorts with the loose untracked
         # files (dim green, '?' rank) in the render pass below.
         if (( ${#untracked_dirs} )); then
-            local gitcol=0 bl= bcol= d=
+            # gitcol = git's current '|' column (shared by every git line); maxafter =
+            # widest graph (ANSI stripped), so the column can grow only as far as keeps
+            # the longest line within stat_width.
+            local gitcol=0 maxafter=0 bl= bcol= aft= d=
             for bl in $STAT_BODY; do
-                if [[ $bl == *\|* ]]; then bcol=${bl%%\|*}; gitcol=${#bcol}; break; fi
+                [[ $bl == *\|* ]] || continue
+                bcol=${bl%%\|*}; (( ${#bcol} > gitcol )) && gitcol=${#bcol}
+                aft=${(S)${bl#*\|}//$'\e['*m/}; (( ${#aft} > maxafter )) && maxafter=${#aft}
             done
             local avail=0
-            if (( gitcol > 2 )); then
-                avail=$(( gitcol - 2 ))
-            else
-                for d in $untracked_dirs; do (( ${#d} > avail )) && avail=${#d}; done
-                (( avail > 64 )) && avail=64
-            fi
+            for d in $untracked_dirs; do (( ${#d} > avail )) && avail=${#d}; done
+            (( gitcol > 2 && gitcol - 2 > avail )) && avail=$(( gitcol - 2 ))
+            # Cap so " name | <graph or 'N files'>" still fits stat_width.
+            local suffixmax=$maxafter
+            (( suffixmax < 12 )) && suffixmax=12
+            local cap=$(( stat_width - 4 - suffixmax ))
+            (( cap < 20 )) && cap=20
+            (( avail > cap )) && avail=cap
             (( avail < 4 )) && avail=4
+            name_w=$avail
             # File counts come from the full recursive untracked list.
             local -a all_untracked=(${(f)"$(git ls-files --others --exclude-standard 2>/dev/null)"})
             local disp= n= word= f= nsp= pad= keep=
@@ -504,7 +542,7 @@ function uncommitted_stat {
                 # then re-emit the body grouped by rank (A ? M D R T S U, then anything
                 # else) so the colors cluster, sorting by filename within each group.
                 local -a r_line=() r_rank=() r_name=()
-                local sline= before= after= lead= body= trail= nf= mark= col= hint= cp= rank= rendered=
+                local sline= before= after= lead= body= trail= nf= mark= col= hint= cp= rank= rendered= tw= sp=
                 for sline in $STAT_BODY; do
                     before=${sline%%\|*}            # " name<pad> " up to the first '|'
                     if [[ $before == $sline ]]; then
@@ -515,6 +553,11 @@ function uncommitted_stat {
                     body=${before#"$lead"}          # name + trailing pad
                     trail=${body##*[! ]}            # trailing spaces
                     nf=${body%"$trail"}             # the display name
+                    if (( name_w > 0 )); then        # re-pad to the shared column so a
+                        tw=$(( name_w - ${#nf} + 1 ))   # collapsed dir (maybe wider than
+                        (( tw < 1 )) && tw=1            # git's own names) and the git
+                        trail=${(l:$tw:)sp}            # lines keep one aligned '|'
+                    fi
                     mark=${wdir_mark[$nf]}
                     col=${wdir_col[$nf]}
                     hint=${wdir_hint[$nf]}
@@ -647,7 +690,7 @@ function main {
     if (( ${#ARG_UNCOMMITTED} )); then
         local color_on=0
         [[ -t 1 && -z $NO_COLOR ]] && color_on=1
-        uncommitted_stat $color_on
+        uncommitted_stat $color_on 4   # body lines are indented "  │ " in the node
         has_changes=$STAT_HAS_CHANGES
         wdir_summary=$STAT_SUMMARY
         wdir_stat=("${STAT_BODY[@]}")

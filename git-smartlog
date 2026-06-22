@@ -436,12 +436,19 @@ function uncommitted_stat {
             # gitcol = git's current '|' column (shared by every git line); maxafter =
             # widest graph (ANSI stripped), so the column can grow only as far as keeps
             # the longest line within stat_width.
-            local gitcol=0 maxafter=0 bl= bcol= aft= d=
+            local gitcol=0 maxafter=0 count_w=0 bl= bcol= aft= d=
             for bl in $STAT_BODY; do
                 [[ $bl == *\|* ]] || continue
                 bcol=${bl%%\|*}; (( ${#bcol} > gitcol )) && gitcol=${#bcol}
                 aft=${(S)${bl#"$bcol"}//$'\e['*m/}   # "| graph" incl '|', ANSI stripped
                 (( ${#aft} > maxafter )) && maxafter=${#aft}
+                # git right-justifies each per-file line count to a shared width (the
+                # widest count's digits). Capture that width so the collapsed-dir
+                # "N files" counts can right-justify into the same column. The leading
+                # token after '|' is the count; Bin/0/graph chars don't match [0-9]+
+                # at that position, so only real line counts set it.
+                [[ $aft =~ '^\|[[:space:]]*([0-9]+)' ]] &&
+                    (( ${#match[1]} > count_w )) && count_w=${#match[1]}
             done
             local avail=0
             for d in $untracked_dirs; do (( ${#d} > avail )) && avail=${#d}; done
@@ -456,7 +463,15 @@ function uncommitted_stat {
             name_w=$avail
             # File counts come from the full recursive untracked list.
             local -a all_untracked=(${(f)"$(git ls-files --others --exclude-standard 2>/dev/null)"})
-            local disp= n= word= f= nsp= pad= keep=
+            # Pass 1: compute each dir's display name and file count, tracking the
+            # widest count. When there are NO git --stat lines (count_w==0), the dirs
+            # have nothing to align to, so fall back to that widest dir count and
+            # right-justify them among themselves. When git lines DO exist, count_w
+            # already holds git's column width and we align dir counts to it (a dir
+            # with more files than git's widest line count is the only case that can
+            # still overhang — git's numbers are already printed, so they can't grow).
+            local -a dir_disp=() dir_n=() dir_path=()
+            local disp= n= f= keep= max_dir_w=0
             for d in $untracked_dirs; do
                 disp=$d
                 if (( ${#disp} > avail )); then
@@ -464,14 +479,23 @@ function uncommitted_stat {
                 fi
                 n=0
                 for f in $all_untracked; do [[ ${f[1,${#d}]} == "$d" ]] && (( n++ )); done
+                dir_disp+=("$disp"); dir_n+=("$n"); dir_path+=("$d")
+                (( ${#n} > max_dir_w )) && max_dir_w=${#n}
+            done
+            (( count_w == 0 )) && count_w=$max_dir_w
+            # Pass 2: emit one "dir/ | N files" line per dir, the count right-justified
+            # to count_w so it lines up with git's per-file line-count column.
+            local word= nsp= pad= di=
+            for ((di = 1; di <= ${#dir_disp}; di++)); do
+                disp=${dir_disp[di]}; n=${dir_n[di]}
                 word=files; (( n == 1 )) && word=file
                 nsp=$(( avail - ${#disp} )); pad=
                 (( nsp > 0 )) && pad=${(l:$nsp:)pad}
-                STAT_BODY+=(" ${disp}${pad} | ${n} ${word}")
+                STAT_BODY+=(" ${disp}${pad} | ${(l:$count_w:)n} ${word}")
                 wdir_mark[$disp]='?'
                 wdir_col[$disp]=$'\e[2;32m'
                 wdir_hint[$disp]=
-                wdir_sortkey[$disp]=$d
+                wdir_sortkey[$disp]=${dir_path[di]}
             done
         fi
 

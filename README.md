@@ -10,7 +10,7 @@ with relative timestamps, authors, and ref decorations, closely mirroring the
 output of Sapling's `sl` (the opt-in `-u` mode adds an uncommitted-changes node
 that intentionally departs from that mirror — see below).
 
-The story behind it — and how the public base is found — is in
+The story behind it is in
 [this post](https://junz.info/writing/git-smartlog/).
 
 <p align="center">
@@ -207,14 +207,15 @@ $ git smartstat
 </p>
 
 Wholly-untracked directories collapse to a single entry — the way `git status`
-lists a new directory — with a file count in place of the `+`/`-` graph:
+lists a new directory — with a file count in place of the `+`/`-` graph,
+right-justified into the same column as git's per-file line counts:
 
 ```text
 $ git smartstat
-3 files, +2 -0
- ? .cache/   | 2 files
- ? notes.txt | 1 +
- M app.py    | 1 +
+3 files, +15 -0
+ ? .cache/   |  2 files
+ ? notes.txt | 14 ++++++++++++++
+ M app.py    |  1 +
 ```
 
 Paths are shown in full up to your terminal width; like `git diff --stat`, they

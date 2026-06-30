@@ -22,6 +22,10 @@
 #   - Long subjects are shown in full; sapling truncates them to the terminal
 #     width with an ellipsis (so they match in a wide terminal, differ in a narrow
 #     one).
+#   - Optional full headers: with -A/--all-authors, every commit shows its author
+#     and subject — including public commits by other people, which sapling (and
+#     this script by default) render metadata-only. An extension sapling has no
+#     equivalent for; the default still matches sapling exactly.
 #
 # Layout
 #   - Public base: the nearest public ancestor of HEAD. Candidate trunks are
@@ -67,12 +71,13 @@
 #     origin/master); inactive local branches and tags are dropped
 #   - Last draft's subject line uses ╭─╯ instead of │ to bend into column 0
 #   - Final line is ~ (truncation indicator)
-#   - Compact public nodes: a public commit that is NOT HEAD and was authored by
-#     someone other than you renders metadata-only (no author, no subject line).
-#     Mirrors sapling's `sl_use_short_header`: short header iff
-#     `graphnode != @ && phase == public && username|email != author|email`.
-#     (Source: builtin_static/production.rs.) So your own public commits and the
-#     @ commit still show author + subject in full.
+#   - Compact public nodes (default; disable with -A/--all-authors): a public
+#     commit that is NOT HEAD and was authored by someone other than you renders
+#     metadata-only (no author, no subject line). Mirrors sapling's
+#     `sl_use_short_header`: short header iff `graphnode != @ && phase == public &&
+#     username|email != author|email`. (Source: builtin_static/production.rs.) So
+#     your own public commits and the @ commit still show author + subject in full.
+#     -A/--all-authors turns this off, showing full headers for every commit.
 #
 # Colors (ANSI; suppressed when stdout isn't a TTY or NO_COLOR is set)
 #   - Draft hash: bright-yellow + bold (\e[93;1m) — applies to ALL drafts
@@ -119,12 +124,14 @@ function die {
 }
 
 function smartlog_usage {
-    print -r -- "usage: $PROG [-u] [-n N] [--base REV]
+    print -r -- "usage: $PROG [-u] [-A] [-n N] [--base REV]
 
 Sapling-style smartlog using only git: the current branch's draft stack
 drawn on top of its nearest public (pushed) base.
 
   -u, --uncommitted   show a synthetic node for uncommitted working-tree changes
+  -A, --all-authors   show author + subject for every commit, including public
+                      commits by other authors (default: those render compact)
   -n, --limit N       public commits to show, including the merge-base (default 1)
       --base REV      override the public base (default: nearest remote trunk, e.g.
                       origin/HEAD, origin/main, origin/master, upstream/main)
@@ -659,14 +666,17 @@ function uncommitted_stat {
 function main {
     # Option parsing (zparseopts is a zsh builtin; -K keeps the ARG_LIMIT default
     # when -n is not passed). Operates on main's own positional params ("$@").
-    local -a ARG_LIMIT=(1) ARG_BASE=() ARG_UNCOMMITTED=() ARG_HELP=()
+    local -a ARG_LIMIT=(1) ARG_BASE=() ARG_UNCOMMITTED=() ARG_ALL_AUTHORS=() ARG_HELP=()
     zparseopts -D -E -K -- \
         {n,-limit}:=ARG_LIMIT \
         -base:=ARG_BASE \
         {u,-uncommitted}=ARG_UNCOMMITTED \
+        {A,-all-authors}=ARG_ALL_AUTHORS \
         {h,-help}=ARG_HELP \
         || { smartlog_usage >&2; exit 2; }
     (( ${#ARG_HELP} )) && { smartlog_usage; exit 0; }
+    local all_authors=0
+    (( ${#ARG_ALL_AUTHORS} )) && all_authors=1
 
     NOW=$EPOCHSECONDS
     local today
@@ -676,8 +686,9 @@ function main {
 
     # For sapling's compact-public-node rule: a public, non-HEAD commit authored
     # by someone else renders metadata-only. Compared against the configured user.
-    local my_email
-    my_email=$(git config user.email 2>/dev/null)
+    # Skipped under -A/--all-authors, where nothing is ever compacted.
+    local my_email=
+    (( ! all_authors )) && my_email=$(git config user.email 2>/dev/null)
 
     # The active local branch (HEAD's) is shown with a trailing "*", like sapling's
     # active bookmark — but only when no remote branch of the same name exists. If
@@ -825,9 +836,10 @@ function main {
         fi
 
         # Compact public node: public (not a draft), not HEAD, authored by someone
-        # else → metadata-only (no author, no subject). See header.
+        # else → metadata-only (no author, no subject). See header. -A/--all-authors
+        # turns this off (all_authors=1), so every commit gets a full header.
         local is_compact=0
-        if (( ! is_draft && ! is_head )) && [[ $author_email != $my_email ]]; then
+        if (( ! all_authors && ! is_draft && ! is_head )) && [[ $author_email != $my_email ]]; then
             is_compact=1
         fi
 

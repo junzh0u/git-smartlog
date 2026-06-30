@@ -44,7 +44,8 @@ it.
 
 Widen the public window with `-n`. Public commits authored by *someone else*
 render metadata-only (no author, no subject), exactly as Sapling does — see
-`2c8c874b9c` below:
+`2c8c874b9c` below. Pass `-A` / `--all-authors` to turn that off and show the
+author and subject for every commit, including other people's public ones:
 
 ```text
 $ git smartlog -n 5
@@ -160,9 +161,11 @@ git config --global alias.sl smartlog
 ## Usage
 
 ```
-usage: git-smartlog [-u] [-n N] [--base REV]
+usage: git-smartlog [-u] [-A] [-n N] [--base REV]
 
   -u, --uncommitted   show a synthetic node for uncommitted working-tree changes
+  -A, --all-authors   show author + subject for every commit, including public
+                      commits by other authors (default: those render compact)
   -n, --limit N       public commits to show, including the merge-base (default 1)
       --base REV      override the public base (default: nearest remote trunk, e.g.
                       origin/HEAD, origin/main, origin/master, upstream/main)
@@ -270,6 +273,11 @@ empty tree so staged and untracked files still show as additions.)
   which treats the working copy as a commit in its own right; Sapling surfaces
   working-copy changes differently. Treat `-u` as a git-smartlog-only convenience,
   not a parity feature.
+- **`-A`/`--all-authors` is an extension.** By default, public commits by other
+  authors render metadata-only, exactly as Sapling does. `-A` turns that off and
+  shows the author and subject for every commit — handy on shared branches where
+  you want to see who did what. Sapling has no equivalent toggle; the default
+  output is unchanged.
 
 ## License
 

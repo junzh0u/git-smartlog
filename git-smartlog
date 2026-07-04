@@ -23,8 +23,12 @@
 #     branch joins the graph as a SINGLE node — its head commit — hanging off its
 #     fork point with the trunk (its merge-base with the public base), tagged
 #     with a dim "(+N)" count of commits since that fork; the stack interior
-#     stays hidden (sapling would draw the full stack). Public commits jumped
-#     over between fork points elide to sapling's dotted ╷ spine, and a stack or
+#     stays hidden (sapling would draw the full stack). A one-commit branch
+#     shows its subject plainly and drops the redundant (+1); a taller one
+#     keeps (+N) and shows its head's subject dimmed — a muted hint of where
+#     the stack ends, visibly not the whole story. -B shows the full stacks.
+#     Public commits jumped over between fork points elide to sapling's dotted
+#     ╷ spine, and a stack or
 #     branch bends ╭─╯ off a dotted-or-empty spine but forks ├─╯ off a solid one,
 #     exactly like sapling. A branch merged into the trunk, or pointing at a
 #     commit already on screen, labels that commit instead of adding a node; a
@@ -1249,11 +1253,20 @@ function main {
             spine='│'
             ;;
         (branch:*)
+            # A one-commit branch IS its node: plain subject, no redundant
+            # (+1). A taller stack keeps the (+N) count and shows its head's
+            # subject muted (dim) — a hint of where the stack ends, visibly
+            # not the whole story; -B shows it all.
             bh=${el#branch:}
             idx=${midx[$bh]}
-            aheadseg="  ${C_DIM}(+${bnode_ahead[$bh]})${C_RESET}"
-            commit_header $idx o "$g" "$C_DRAFT_HASH" '' 0 "$aheadseg"
-            print -r -- "${join}  ${subjects[idx]}"
+            if [[ ${bnode_ahead[$bh]} == 1 ]]; then
+                commit_header $idx o "$g" "$C_DRAFT_HASH" '' 0 ''
+                print -r -- "${join}  ${subjects[idx]}"
+            else
+                aheadseg="  ${C_DIM}(+${bnode_ahead[$bh]})${C_RESET}"
+                commit_header $idx o "$g" "$C_DRAFT_HASH" '' 0 "$aheadseg"
+                print -r -- "${join}  ${C_DIM}${subjects[idx]}${C_RESET}"
+            fi
             print -r -- "│"
             spine='│'
             ;;

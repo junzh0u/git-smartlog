@@ -7,14 +7,15 @@ self-contained zsh script. The same file doubles as
 It renders the current branch's **draft stack** — the first-parent chain of your
 local (unpushed) commits — drawn on top of its nearest **public** (pushed) base,
 with relative timestamps, authors, and ref decorations, closely mirroring the
-output of Sapling's `sl` (the opt-in `-u` mode adds an uncommitted-changes node
-that intentionally departs from that mirror — see below).
+output of Sapling's `sl`. Two opt-in extensions depart from that mirror: `-u`
+adds an uncommitted-changes node, and `-b` folds your other local branches into
+the graph — see below.
 
 The story behind it is in
 [this post](https://junz.info/writing/git-smartlog/).
 
 <p align="center">
-  <img src="cover.png" alt="git-smartlog -u -n 2 output" width="600">
+  <img src="cover.png" alt="git-smartlog -b -u -n 2 output" width="600">
 </p>
 
 ## Example
@@ -23,16 +24,16 @@ On a feature branch with a few local commits stacked on `origin/master`:
 
 ```text
 $ git smartlog
-  @  b82a2561e9  14 minutes ago  junz  feat/retry-backoff*
+  @  498df929d5  Today at 09:33  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  98f650bc74  Today at 11:26  junz
+  o  ba482d2f0b  Today at 06:47  junz
   │  Add exponential backoff with jitter
   │
-  o  50faf770f4  Yesterday at 14:26  junz
+  o  fa8075adfb  Yesterday at 09:47  junz
 ╭─╯  Extract retry policy into its own module
 │
-o  5c4369ce49  Wednesday at 14:26  junz  origin/master
+o  c7283c280b  Wednesday at 09:47  junz  origin/master
 │  Bump dependencies
 ~
 ```
@@ -44,28 +45,29 @@ it.
 
 Widen the public window with `-n`. Public commits authored by *someone else*
 render metadata-only (no author, no subject), exactly as Sapling does — see
-`2c8c874b9c` below. Pass `-A` / `--all-authors` to turn that off and show the
-author and subject for every commit, including other people's public ones:
+`a21fc72b55` and `80cf810025` below. Pass `-A` / `--all-authors` to turn that
+off and show the author and subject for every commit, including other people's
+public ones:
 
 ```text
-$ git smartlog -n 5
-  @  b82a2561e9  14 minutes ago  junz  feat/retry-backoff*
+$ git smartlog -n 4
+  @  498df929d5  Today at 09:33  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  98f650bc74  Today at 11:26  junz
+  o  ba482d2f0b  Today at 06:47  junz
   │  Add exponential backoff with jitter
   │
-  o  50faf770f4  Yesterday at 14:26  junz
+  o  fa8075adfb  Yesterday at 09:47  junz
 ╭─╯  Extract retry policy into its own module
 │
-o  5c4369ce49  Wednesday at 14:26  junz  origin/master
+o  c7283c280b  Wednesday at 09:47  junz  origin/master
 │  Bump dependencies
 │
-o  2c8c874b9c  Monday at 14:26
+o  a21fc72b55  Tuesday at 09:47
 │
 │
-o  91eb0d1793  Jun 05 at 09:30  junz
-│  Add config loader and defaults
+o  80cf810025  Monday at 09:47
+│
 ~
 ```
 
@@ -111,25 +113,78 @@ $ git smartlog -u -n 2
   │  S vendor/timeutil      | 2 +-
   │  U version.go           | 4 ++++
   │
-  o  b82a2561e9  14 minutes ago  junz  feat/retry-backoff*
+  o  498df929d5  Today at 09:33  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  98f650bc74  Today at 11:26  junz
+  o  ba482d2f0b  Today at 06:47  junz
   │  Add exponential backoff with jitter
   │
-  o  50faf770f4  Yesterday at 14:26  junz
+  o  fa8075adfb  Yesterday at 09:47  junz
 ╭─╯  Extract retry policy into its own module
 │
-o  5c4369ce49  Wednesday at 14:26  junz  origin/master
+o  c7283c280b  Wednesday at 09:47  junz  origin/master
 │  Bump dependencies
 │
-o  2c8c874b9c  Monday at 14:26
+o  a21fc72b55  Tuesday at 09:47
+│
+~
+```
+
+With `-b` / `--branches`, every **other local branch** joins the graph too — as
+a single node hanging off its fork point with the trunk, tagged with a dim `(+N)`
+count of commits since that fork (the stack interior stays hidden). Branch names
+render **cyan**, so they stand apart from green remote refs and the yellow active
+branch. Fork points are added to the public column no matter how far down they
+sit; commits skipped between them elide to Sapling's dotted `╷` spine (visible
+with the default `-n 1` window). Two more rules keep the graph quiet: a branch
+pointing at a commit already on screen just labels that commit instead of adding
+a node (`wip/backoff` on a draft below, `prod` on a public commit), and a branch
+whose same-name remote ref sits at the same commit shows only the remote name
+(`origin/hotfix`). Everything composes with `-u` and `-n` — this is the cover
+image up top:
+
+```text
+$ git smartlog -b -u -n 2
+  @  Uncommitted changes  10 files, +30 -13
+  │  A metrics.go           | 7 +++++++
+  │  ? retry_test.go        | 9 +++++++++
+  │  M http_client.go       | 2 +-
+  │  M retry.go             | 8 +++++++-
+  │  M scripts/release.sh   | 0 +x
+  │  D legacy.go            | 6 ------
+  │  R logging.go => log.go | 0
+  │  T config.json          | 5 +----
+  │  S vendor/timeutil      | 2 +-
+  │  U version.go           | 4 ++++
+  │
+  o  498df929d5  Today at 09:33  junz  feat/retry-backoff*
+  │  Wire backoff into the HTTP client
+  │
+  o  ba482d2f0b  Today at 06:47  junz  wip/backoff
+  │  Add exponential backoff with jitter
+  │
+  o  fa8075adfb  Yesterday at 09:47  junz
+╭─╯  Extract retry policy into its own module
+│
+│ o  0f9c309236  Thursday at 09:47  junz  origin/hotfix  (+1)
+├─╯  Patch release 0.1.1
+│
+o  c7283c280b  Wednesday at 09:47  junz  origin/master
+│  Bump dependencies
+│
+o  a21fc72b55  Tuesday at 09:47
+│
+│
+│ o  f6211c4f36  Yesterday at 08:47  junz  fix/redirect-loop  (+2)
+├─╯  Abort redirect loops via CheckRedirect
+│
+o  80cf810025  Monday at 09:47  prod
 │
 ~
 ```
 
 In a real terminal the output is colorized — draft hashes in bold yellow,
-`HEAD`'s line in magenta, remote refs in green. ANSI is suppressed when stdout
+`HEAD`'s line in magenta, remote refs in green, `-b` branch names in cyan. ANSI is suppressed when stdout
 isn't a TTY (as in these captures) or when `NO_COLOR` is set.
 
 ## Requirements
@@ -161,11 +216,13 @@ git config --global alias.sl smartlog
 ## Usage
 
 ```
-usage: git-smartlog [-u] [-A] [-n N] [--base REV]
+usage: git-smartlog [-u] [-A] [-b] [-n N] [--base REV]
 
   -u, --uncommitted   show a synthetic node for uncommitted working-tree changes
   -A, --all-authors   show author + subject for every commit, including public
                       commits by other authors (default: those render compact)
+  -b, --branches      show every other local branch as a single node above its
+                      fork point with the trunk, tagged (+N) commits since fork
   -n, --limit N       public commits to show, including the merge-base (default 1)
       --base REV      override the public base (default: nearest remote trunk, e.g.
                       origin/HEAD, origin/main, origin/master, upstream/main)
@@ -252,6 +309,14 @@ empty tree so staged and untracked files still show as additions.)
   marker moves there. This block is computed by the in-file `uncommitted_stat`
   function — the same code the [`git-smartstat`](#git-smartstat) command runs.
 - **Public window** — `-n` commits starting at the base.
+- **Other branches** — with `-b`/`--branches`, every other local branch joins the
+  graph as a single node (its head commit) above its fork point with the trunk,
+  tagged with a dim `(+N)` count of commits since that fork; branch names render
+  cyan so they stand apart from green remote refs. Fork points are added to the
+  public column, with skipped commits eliding to Sapling's dotted `╷` spine. A
+  branch merged into the trunk — or pointing at a commit already on screen —
+  labels that commit instead of adding a node, and a branch whose same-name
+  remote ref sits at the same commit shows only the remote name.
 - **Relative time** — mirrors Sapling's `smartdate`: `age()` ("N minutes ago")
   within 90 minutes, calendar-day `simpledate()` ("Yesterday", "Mon DD", …)
   beyond it.
@@ -263,8 +328,14 @@ empty tree so staged and untracked files still show as additions.)
 - **Single stack only.** It renders the current `HEAD`'s first-parent draft chain
   plus its public base. Sapling renders *every* draft branch as its own stack via
   a full DAG renderer; this script deliberately does not, so other local branches
-  and draft heads won't appear. Output matches `sl` exactly when you're working a
-  single branch (the common case).
+  and draft heads won't appear by default. Output matches `sl` exactly when you're
+  working a single branch (the common case).
+- **`-b`/`--branches` is an extension.** Other local branches appear as single
+  elided nodes with a `(+N)` commits-since-fork tag, where Sapling would draw
+  each branch's full stack (and has no `(+N)`); branch names are cyan rather than
+  Sapling's green `sl.book`, so local branches read differently from remote refs.
+  A branch forking from a draft of the current stack is approximated: its node
+  hangs off the shared trunk fork point and `(+N)` includes the shared drafts.
 - **Long subjects shown in full.** Sapling truncates them to the terminal width
   with an ellipsis.
 - **`-u` is an extension, not a mirror.** The default output tracks Sapling's `sl`

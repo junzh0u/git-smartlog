@@ -17,8 +17,21 @@
 #     its public base. Sapling's smartlog renders EVERY draft branch as its own
 #     stack through a full DAG renderer (renderdag) ordered by an internal
 #     topo-sort; this script deliberately does not — other local branches and
-#     draft heads won't appear. Output matches `\sl` exactly when you're working a
-#     single branch (the common case).
+#     draft heads won't appear by default. Output matches `\sl` exactly when
+#     you're working a single branch (the common case).
+#   - Other branches, compact (opt-in via -b/--branches): every other local
+#     branch joins the graph as a SINGLE node — its head commit — hanging off its
+#     fork point with the trunk (its merge-base with the public base), tagged
+#     with a dim "(+N)" count of commits since that fork; the stack interior
+#     stays hidden (sapling would draw the full stack). Public commits jumped
+#     over between fork points elide to sapling's dotted ╷ spine, and a stack or
+#     branch bends ╭─╯ off a dotted-or-empty spine but forks ├─╯ off a solid one,
+#     exactly like sapling. A branch merged into the trunk, or pointing at a
+#     commit already on screen, labels that commit instead of adding a node; a
+#     branch whose same-name remote ref sits at the same commit shows only the
+#     remote name (same rule as the active branch). A branch forking from a
+#     draft of the current stack is approximated: its node hangs off the shared
+#     trunk fork point and (+N) includes the shared draft commits.
 #   - Long subjects are shown in full; sapling truncates them to the terminal
 #     width with an ellipsis (so they match in a wide terminal, differ in a narrow
 #     one).
@@ -39,6 +52,10 @@
 #   - Drafts: first-parent commits in `HEAD ^merge_base`, newest first
 #   - Public window: -n commits starting at base_ref (or merge_base if base
 #     is ahead of HEAD's chain)
+#   - Branch nodes (-b): one node per other local branch, drawn above its fork
+#     point. With -b the public window always anchors at the trunk tip, and the
+#     merge-base plus every branch's fork point are added to it; commits jumped
+#     over between shown publics render as a dotted ╷ spine
 #
 # Format per commit
 #   <symbol>  <hash:10>  <reltime>  <author>  [<refs>]
@@ -86,6 +103,9 @@
 #   - Refs: remote bookmarks green (\e[32m); the active local branch (name*) yellow
 #     (\e[33m). Mirrors sapling's [color] defaults sl.remote=green, sl.active=yellow
 #     (builtin_static/production.rs)
+#   - Local branch names from -b: cyan (\e[36m) — deliberately NOT sapling's
+#     sl.book green, so local branches stand apart from green remote refs; the
+#     "(+N)" commits-since-fork tag: dim (\e[2m)
 #   - Uncommitted body (-u): a change marker prefixes each filename; marker and name
 #     are colored by kind — A added green (\e[32m), ? untracked dim green (\e[2;32m),
 #     D deleted red (\e[31m), R/C renamed blue (\e[34m), T typechange magenta
@@ -124,7 +144,7 @@ function die {
 }
 
 function smartlog_usage {
-    print -r -- "usage: $PROG [-u] [-A] [-n N] [--base REV]
+    print -r -- "usage: $PROG [-u] [-A] [-b] [-n N] [--base REV]
 
 Sapling-style smartlog using only git: the current branch's draft stack
 drawn on top of its nearest public (pushed) base.
@@ -132,6 +152,8 @@ drawn on top of its nearest public (pushed) base.
   -u, --uncommitted   show a synthetic node for uncommitted working-tree changes
   -A, --all-authors   show author + subject for every commit, including public
                       commits by other authors (default: those render compact)
+  -b, --branches      show every other local branch as a single node above its
+                      fork point with the trunk, tagged (+N) commits since fork
   -n, --limit N       public commits to show, including the merge-base (default 1)
       --base REV      override the public base (default: nearest remote trunk, e.g.
                       origin/HEAD, origin/main, origin/master, upstream/main)
@@ -663,20 +685,64 @@ function uncommitted_stat {
     }
 }
 
+function commit_header {
+    # Print one commit's header row. $1 index into the metadata arrays, $2 node
+    # symbol, $3 gutter prefix, $4 hash color, $5 text color ('' for none),
+    # $6 compact (1 drops the author), $7 pre-colored suffix (the -b "(+N)"
+    # tag). Reads main's metadata arrays and C_* palette via zsh dynamic
+    # scoping, plus REPLY-style helpers reltime/filter_refs.
+    local i=$1 symbol=$2 g=$3 hash_color=$4 text_color=$5 compact=$6 extra=$7
+    local text_reset=
+    [[ -n $text_color ]] && text_reset=$C_RESET
+
+    reltime ${epochs[$i]}
+    local time_str=$REPLY
+    filter_refs "${refs[$i]}"
+    local refs_clean=$REPLY
+
+    # Color each ref by kind, matching sapling: the active local branch
+    # ($ACTIVE_BRANCH, the "name*" token) is yellow, remote bookmarks green, and
+    # local branch names attached by -b cyan — a deliberate deviation from
+    # sapling's green sl.book, so local branches stand apart from remote refs.
+    # Quote the ACTIVE_BRANCH RHS so its trailing "*" matches literally.
+    local -a colored=()
+    local rt=
+    for rt in ${(s: :)refs_clean}; do
+        if [[ $rt == "$ACTIVE_BRANCH" ]]; then
+            colored+=("${C_BRANCH}${rt}${C_RESET}")
+        else
+            colored+=("${C_REF}${rt}${C_RESET}")
+        fi
+    done
+    for rt in ${(o)${=attach_names[${all_shas[$i]}]:-}}; do
+        colored+=("${C_LOCAL}${rt}${C_RESET}")
+    done
+    local ref_display=
+    (( ${#colored} )) && ref_display="  ${(j: :)colored}"
+
+    local author_seg="  ${authors[$i]}"
+    (( compact )) && author_seg=
+
+    print -r -- "${g}${symbol}  ${hash_color}${hashes[$i]}${C_RESET}${text_color}  ${time_str}${author_seg}${text_reset}${ref_display}${extra}"
+}
+
 function main {
     # Option parsing (zparseopts is a zsh builtin; -K keeps the ARG_LIMIT default
     # when -n is not passed). Operates on main's own positional params ("$@").
-    local -a ARG_LIMIT=(1) ARG_BASE=() ARG_UNCOMMITTED=() ARG_ALL_AUTHORS=() ARG_HELP=()
+    local -a ARG_LIMIT=(1) ARG_BASE=() ARG_UNCOMMITTED=() ARG_ALL_AUTHORS=() ARG_BRANCHES=() ARG_HELP=()
     zparseopts -D -E -K -- \
         {n,-limit}:=ARG_LIMIT \
         -base:=ARG_BASE \
         {u,-uncommitted}=ARG_UNCOMMITTED \
         {A,-all-authors}=ARG_ALL_AUTHORS \
+        {b,-branches}=ARG_BRANCHES \
         {h,-help}=ARG_HELP \
         || { smartlog_usage >&2; exit 2; }
     (( ${#ARG_HELP} )) && { smartlog_usage; exit 0; }
     local all_authors=0
     (( ${#ARG_ALL_AUTHORS} )) && all_authors=1
+    local show_branches=0
+    (( ${#ARG_BRANCHES} )) && show_branches=1
 
     NOW=$EPOCHSECONDS
     local today
@@ -739,157 +805,257 @@ function main {
         wdir_stat=("${STAT_BODY[@]}")
     fi
 
-    local -a drafts publics
+    local -a drafts
     if [[ $head_sha != $merge_base ]]; then
         drafts=("${(@f)$(git rev-list --first-parent HEAD "^$merge_base")}")
     fi
-    publics=("${(@f)$(git rev-list --first-parent "$base_ref" -n $limit)}")
-    # If base_ref is ahead of HEAD's branch, anchor public column at merge_base instead.
-    if [[ ${publics[(Ie)$merge_base]} -eq 0 ]]; then
-        publics=("${(@f)$(git rev-list --first-parent "$merge_base" -n $limit)}")
+
+    # -b/--branches: collect every other local branch. A branch merged into the
+    # trunk, or pointing at a commit already in the current stack, just labels
+    # that commit (attach_names); anything else becomes a single node above its
+    # fork point with the trunk (bnodes_at/bnode_ahead) — the stack interior
+    # stays hidden. A branch whose same-name remote ref sits at the same commit
+    # keeps its local name hidden, mirroring the ACTIVE_BRANCH rule above (the
+    # remote ref, which %D still carries, already identifies it).
+    local -A attach_names bnodes_at bnode_ahead
+    local -a bnode_heads=() extra_publics=()
+    if (( show_branches )); then
+        # for-each-ref's format language has no %x1f escape (that's pretty-format
+        # only); a space separator is safe — ref names cannot contain spaces.
+        local -A remote_tip
+        local rn= rs=
+        while read -r rn rs; do
+            [[ -n $rn ]] && remote_tip[$rn]=$rs
+        done < <(git for-each-ref --format='%(refname:short) %(objectname)' refs/remotes 2>/dev/null)
+
+        local bname= bhead= fork= ahead= rk= name_hidden=
+        while read -r bname bhead; do
+            [[ -z $bname || $bname == "$cur_branch" ]] && continue
+            fork=$(git merge-base "$bhead" "$base_ref" 2>/dev/null) || continue
+            name_hidden=0
+            for rk in ${(k)remote_tip}; do
+                if [[ $rk == */"$bname" && ${remote_tip[$rk]} == $bhead ]]; then
+                    name_hidden=1
+                    break
+                fi
+            done
+            if [[ $bhead == $fork ]] || (( ${drafts[(Ie)$bhead]} )); then
+                (( name_hidden )) || attach_names[$bhead]+="$bname "
+                [[ $bhead == $fork ]] && extra_publics+=("$fork")
+                continue
+            fi
+            # Two branches on the same head share one node (both names attach).
+            if [[ -z ${bnode_ahead[$bhead]} ]]; then
+                ahead=$(git rev-list --count "$bhead" "^$fork" 2>/dev/null)
+                bnodes_at[$fork]+="$bhead "
+                bnode_ahead[$bhead]=$ahead
+                bnode_heads+=("$bhead")
+                extra_publics+=("$fork")
+            fi
+            (( name_hidden )) || attach_names[$bhead]+="$bname "
+        done < <(git for-each-ref --format='%(refname:short) %(objectname)' refs/heads 2>/dev/null)
     fi
 
-    local C_PUBLIC_HASH= C_DRAFT_HASH= C_HEAD_TEXT= C_REF= C_BRANCH= C_RESET=
+    local -a publics
+    if (( show_branches )); then
+        # Shown publics: the -n window from the trunk tip, plus the merge-base
+        # and every branch's fork point (which can sit far below the window),
+        # ordered along the trunk by one topo-order walk down to their common
+        # ancestor. Neighbors that aren't parent/child render with the dotted ╷
+        # spine between them.
+        local -a shown
+        shown=("${(@f)$(git rev-list --first-parent "$base_ref" -n $limit)}")
+        shown+=("$merge_base" $extra_publics)
+        shown=(${(u)shown})
+        if (( ${#shown} > 1 )); then
+            local walk_base=
+            walk_base=$(git merge-base --octopus $shown 2>/dev/null)
+            local -a ordered=()
+            [[ -n $walk_base ]] &&
+                ordered=("${(@f)$(git rev-list --topo-order $shown "^$walk_base" 2>/dev/null)}")
+            publics=()
+            local os=
+            for os in $ordered; do
+                (( ${shown[(Ie)$os]} )) && publics+=("$os")
+            done
+            # walk_base itself (excluded by ^walk_base above) — or everything,
+            # if the octopus/walk failed: append whatever the walk didn't order.
+            for os in $shown; do
+                (( ${publics[(Ie)$os]} )) || publics+=("$os")
+            done
+        else
+            publics=($shown)
+        fi
+    else
+        publics=("${(@f)$(git rev-list --first-parent "$base_ref" -n $limit)}")
+        # If base_ref is ahead of HEAD's branch, anchor public column at merge_base instead.
+        if [[ ${publics[(Ie)$merge_base]} -eq 0 ]]; then
+            publics=("${(@f)$(git rev-list --first-parent "$merge_base" -n $limit)}")
+        fi
+    fi
+
+    local C_PUBLIC_HASH= C_DRAFT_HASH= C_HEAD_TEXT= C_REF= C_BRANCH= C_LOCAL= C_DIM= C_RESET=
     if [[ -t 1 && -z $NO_COLOR ]]; then
         C_PUBLIC_HASH=$'\e[33m'
         C_DRAFT_HASH=$'\e[93;1m'
         C_HEAD_TEXT=$'\e[35m'
         C_REF=$'\e[32m'
         C_BRANCH=$'\e[33m'
+        C_LOCAL=$'\e[36m'
+        C_DIM=$'\e[2m'
         C_RESET=$'\e[0m'
     fi
 
     local -a all_shas
-    all_shas=("${drafts[@]}" "${publics[@]}")
+    all_shas=("${drafts[@]}" "${bnode_heads[@]}" "${publics[@]}")
     (( ${#all_shas} == 0 )) && die "Nothing to display"
 
     local commit_data
     commit_data=$(git log --no-walk=unsorted --abbrev=10 --decorate=full \
-        --pretty=format:'%h%x1f%at%x1f%al%x1f%ae%x1f%D%x1f%s' "${all_shas[@]}")
+        --pretty=format:'%h%x1f%at%x1f%al%x1f%ae%x1f%D%x1f%P%x1f%s' "${all_shas[@]}")
 
-    local -a hashes epochs authors author_emails refs subjects
-    local h e a ae r s
-    while IFS=$'\x1f' read -r h e a ae r s; do
+    local -a hashes epochs authors author_emails refs parents subjects
+    local h e a ae r p s
+    while IFS=$'\x1f' read -r h e a ae r p s; do
         [[ -z $h ]] && continue
         hashes+=("$h")
         epochs+=("$e")
         authors+=("$a")
         author_emails+=("$ae")
         refs+=("$r")
+        parents+=("$p")
         subjects+=("$s")
     done <<< "$commit_data"
 
+    # sha -> index into the metadata arrays (the render plan is sha-driven).
+    local -A midx
+    local -i mi=0
+    for ((mi = 1; mi <= ${#all_shas}; mi++)); do
+        midx[${all_shas[mi]}]=$mi
+    done
+
     local n_drafts=${#drafts}
-    local total=$((n_drafts + ${#publics}))
 
-    # Synthetic wdir node, drawn above the stack: @ marker, draft-colored label, the
-    # change summary in HEAD-text color. It connects straight down into the draft
-    # column when HEAD is a draft, otherwise it bends (╭─╯) into the public column.
-    if (( has_changes )); then
-        local wdir_text_reset=
-        [[ -n $C_HEAD_TEXT ]] && wdir_text_reset=$C_RESET
-        print -r -- "  @  ${C_DRAFT_HASH}Uncommitted changes${C_RESET}${C_HEAD_TEXT}  ${wdir_summary}${wdir_text_reset}"
-        # stat_line already starts with one space (git's --stat lead); add one more
-        # so the marker sits 2 cols past the │ spine, aligning with commit text
-        # (│  subject) and the node header (@  Uncommitted changes).
-        local stat_line
-        for stat_line in $wdir_stat; do
-            print -r -- "  │ ${stat_line}"
+    # Render plan: walk the public column top-down. The current draft stack
+    # (with its optional wdir node) renders above merge_base; each -b branch
+    # head renders as a single node above its fork point, after the stack when
+    # they share one. Between rows, `spine` tracks what the gutter column
+    # carries at that point: '' above the topmost public, '│' solid
+    # (parent/child adjacent), '╷' dotted (commits elided between). Stack and
+    # branch rows take the matching gutter prefix, and their join row bends
+    # ╭─╯ off a dotted-or-empty spine but forks ├─╯ off a solid one — exactly
+    # how sapling renders it.
+    local -a plan=()
+    local pp= bh=
+    for pp in $publics; do
+        [[ $pp == $merge_base ]] && plan+=(stack)
+        for bh in ${=bnodes_at[$pp]:-}; do
+            plan+=("branch:$bh")
         done
-        if (( n_drafts > 0 )); then
-            print -r -- "  │"
-        else
-            print -r -- "╭─╯"
+        plan+=("public:$pp")
+    done
+
+    local spine= el= g= join= symbol= text_color= subject_body= seg= aheadseg=
+    local -i pl_i=0 pub_i=0 n_plan=${#plan} idx=0 di=0
+    local is_compact=0
+    for ((pl_i = 1; pl_i <= n_plan; pl_i++)); do
+        el=${plan[pl_i]}
+        if [[ -n $spine ]]; then g="${spine} "; else g='  '; fi
+        if [[ $spine == '│' ]]; then join='├─╯'; else join='╭─╯'; fi
+
+        case $el in
+        (stack)
+            # Synthetic wdir node, drawn above the stack: @ marker, draft-colored
+            # label, the change summary in HEAD-text color. It connects straight
+            # down into the draft column when HEAD is a draft, otherwise it bends
+            # into the public column.
+            if (( has_changes )); then
+                local wdir_text_reset=
+                [[ -n $C_HEAD_TEXT ]] && wdir_text_reset=$C_RESET
+                print -r -- "${g}@  ${C_DRAFT_HASH}Uncommitted changes${C_RESET}${C_HEAD_TEXT}  ${wdir_summary}${wdir_text_reset}"
+                # stat_line already starts with one space (git's --stat lead); add
+                # one more so the marker sits 2 cols past the │ spine, aligning
+                # with commit text (│  subject) and the node header (@  Uncomm…).
+                local stat_line=
+                for stat_line in $wdir_stat; do
+                    print -r -- "${g}│ ${stat_line}"
+                done
+                if (( n_drafts > 0 )); then
+                    print -r -- "${g}│"
+                else
+                    print -r -- "$join"
+                    print -r -- "│"
+                    spine='│'
+                fi
+            fi
+            for ((di = 1; di <= n_drafts; di++)); do
+                idx=${midx[${drafts[di]}]}
+                symbol=o
+                text_color=
+                if [[ ${drafts[di]} == $head_sha ]] && (( ! has_changes )); then
+                    # With uncommitted changes the @ marker belongs to the wdir
+                    # node above; HEAD stays a normal node (keeps author/subject).
+                    symbol=@
+                    text_color=$C_HEAD_TEXT
+                fi
+                commit_header $idx $symbol "$g" "$C_DRAFT_HASH" "$text_color" 0 ''
+                subject_body="  ${text_color}${subjects[idx]}${text_color:+$C_RESET}"
+                if (( di == n_drafts )); then
+                    print -r -- "${join}${subject_body}"
+                    print -r -- "│"
+                    spine='│'
+                else
+                    print -r -- "${g}│${subject_body}"
+                    print -r -- "${g}│"
+                fi
+            done
+            ;;
+        (branch:*)
+            bh=${el#branch:}
+            idx=${midx[$bh]}
+            aheadseg="  ${C_DIM}(+${bnode_ahead[$bh]})${C_RESET}"
+            commit_header $idx o "$g" "$C_DRAFT_HASH" '' 0 "$aheadseg"
+            print -r -- "${join}  ${subjects[idx]}"
             print -r -- "│"
-        fi
-    fi
-
-    local i
-    for ((i=1; i<=total; i++)); do
-        local sha=${all_shas[$i]}
-        local hash=${hashes[$i]}
-        local epoch=${epochs[$i]}
-        local author=${authors[$i]}
-        local author_email=${author_emails[$i]}
-        local refs_raw=${refs[$i]}
-        local subject=${subjects[$i]}
-
-        local is_draft=0 is_last_draft=0 is_last_public=0
-        (( i <= n_drafts )) && is_draft=1
-        (( i == n_drafts && n_drafts > 0 )) && is_last_draft=1
-        (( i == total )) && is_last_public=1
-
-        local symbol=o
-        local hash_color=$C_PUBLIC_HASH
-        local text_color=
-        (( is_draft )) && hash_color=$C_DRAFT_HASH
-        local is_head=0
-        if [[ $sha == $head_sha ]]; then
-            is_head=1
-            # With uncommitted changes the @ marker belongs to the wdir node above;
-            # HEAD stays a normal node (but is_head still forces a full, non-compact
-            # header so its author/subject keep showing).
-            if (( ! has_changes )); then
+            spine='│'
+            ;;
+        (public:*)
+            pp=${el#public:}
+            (( pub_i++ ))
+            idx=${midx[$pp]}
+            symbol=o
+            text_color=
+            if [[ $pp == $head_sha ]] && (( ! has_changes )); then
+                # With uncommitted changes the @ marker belongs to the wdir node
+                # above; HEAD stays a normal node (but still gets a full,
+                # non-compact header so its author/subject keep showing).
                 symbol=@
                 text_color=$C_HEAD_TEXT
             fi
-        fi
-
-        # Compact public node: public (not a draft), not HEAD, authored by someone
-        # else → metadata-only (no author, no subject). See header. -A/--all-authors
-        # turns this off (all_authors=1), so every commit gets a full header.
-        local is_compact=0
-        if (( ! all_authors && ! is_draft && ! is_head )) && [[ $author_email != $my_email ]]; then
-            is_compact=1
-        fi
-
-        reltime $epoch
-        local time_str=$REPLY
-        filter_refs "$refs_raw"
-        local refs_clean=$REPLY
-        local ref_display=
-        if [[ -n $refs_clean ]]; then
-            # Color each ref by kind, matching sapling: the active local branch
-            # ($ACTIVE_BRANCH, the "name*" token) is yellow, remote bookmarks green.
-            # Quote the RHS so the trailing "*" is matched literally, not as a glob.
-            # Both locals MUST carry an assignment: a bare `local rt` / `local -a
-            # colored` re-run in the same function scope neither resets the prior
-            # iteration's value nor stays silent — zsh echoes the stale value.
-            local -a colored=()
-            local rt=
-            for rt in ${(s: :)refs_clean}; do
-                if [[ $rt == "$ACTIVE_BRANCH" ]]; then
-                    colored+=("${C_BRANCH}${rt}${C_RESET}")
-                else
-                    colored+=("${C_REF}${rt}${C_RESET}")
-                fi
-            done
-            ref_display="  ${(j: :)colored}"
-        fi
-
-        local indent=
-        (( is_draft )) && indent="  "
-
-        local text_reset=
-        [[ -n $text_color ]] && text_reset=$C_RESET
-
-        local author_seg="  ${author}"
-        (( is_compact )) && author_seg=
-        local subject_body="  ${text_color}${subject}${text_reset}"
-        (( is_compact )) && subject_body=
-
-        print -r -- "${indent}${symbol}  ${hash_color}${hash}${C_RESET}${text_color}  ${time_str}${author_seg}${text_reset}${ref_display}"
-
-        if (( is_last_draft )); then
-            print -r -- "╭─╯${subject_body}"
-            print -r -- "│"
-        elif (( is_last_public )); then
-            print -r -- "${indent}│${subject_body}"
-            print -r -- "~"
-        else
-            print -r -- "${indent}│${subject_body}"
-            print -r -- "${indent}│"
-        fi
+            # Compact public node: not HEAD, authored by someone else →
+            # metadata-only (no author, no subject). See header. -A/--all-authors
+            # turns this off (all_authors=1), so every commit gets a full header.
+            is_compact=0
+            if (( ! all_authors )) && [[ $pp != $head_sha && ${author_emails[idx]} != $my_email ]]; then
+                is_compact=1
+            fi
+            commit_header $idx $symbol '' "$C_PUBLIC_HASH" "$text_color" $is_compact ''
+            subject_body="  ${text_color}${subjects[idx]}${text_color:+$C_RESET}"
+            (( is_compact )) && subject_body=
+            if (( pl_i == n_plan )); then
+                print -r -- "│${subject_body}"
+                print -r -- "~"
+            else
+                # Segment down to the next shown public: solid when it's a
+                # parent of this commit, dotted ╷ when commits are elided.
+                seg='╷'
+                [[ " ${parents[idx]} " == *" ${publics[pub_i+1]} "* ]] && seg='│'
+                print -r -- "${seg}${subject_body}"
+                print -r -- "$seg"
+                spine=$seg
+            fi
+            ;;
+        esac
     done
 }
 

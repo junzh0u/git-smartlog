@@ -32,6 +32,19 @@
 #     remote name (same rule as the active branch). A branch forking from a
 #     draft of the current stack is approximated: its node hangs off the shared
 #     trunk fork point and (+N) includes the shared draft commits.
+#   - Other branches, full (opt-in via -B/--branches-full; implies -b and wins
+#     over it): every other local branch renders its COMPLETE first-parent
+#     stack, sapling-style. All heads' chains union into a forest of draft
+#     trees, so a branch forking from a draft shows as a real fork (no
+#     approximation, no "(+N)"), and commits stacked ABOVE HEAD — a branch
+#     containing HEAD while you're checked out mid-stack — appear too, with @
+#     drawn mid-tree. At each fork the spine child (the one on HEAD's path,
+#     else the newest subtree) continues the column; each other child opens a
+#     column one level deeper ("│ o" rows), newest first, closing with a ├─╯
+#     bend right above the fork — the contiguous-chain linearization sapling's
+#     renderdag produces, verified against it. With -u the wdir node draws
+#     directly above HEAD at HEAD's depth. Label and remote-name rules are
+#     shared with -b.
 #   - Long subjects are shown in full; sapling truncates them to the terminal
 #     width with an ellipsis (so they match in a wide terminal, differ in a narrow
 #     one).
@@ -56,6 +69,9 @@
 #     point. With -b the public window always anchors at the trunk tip, and the
 #     merge-base plus every branch's fork point are added to it; commits jumped
 #     over between shown publics render as a dotted ╷ spine
+#   - Draft trees (-B): all heads' first-parent chains union into trees; each
+#     tree renders above its root's public fork point — spine child straight
+#     up the same column, side subtrees one column deeper per fork level
 #
 # Format per commit
 #   <symbol>  <hash:10>  <reltime>  <author>  [<refs>]
@@ -144,7 +160,7 @@ function die {
 }
 
 function smartlog_usage {
-    print -r -- "usage: $PROG [-u] [-A] [-b] [-n N] [--base REV]
+    print -r -- "usage: $PROG [-u] [-A] [-b|-B] [-n N] [--base REV]
 
 Sapling-style smartlog using only git: the current branch's draft stack
 drawn on top of its nearest public (pushed) base.
@@ -154,6 +170,9 @@ drawn on top of its nearest public (pushed) base.
                       commits by other authors (default: those render compact)
   -b, --branches      show every other local branch as a single node above its
                       fork point with the trunk, tagged (+N) commits since fork
+  -B, --branches-full show every other local branch as its FULL stack, like
+                      sapling — including forks at draft commits and commits
+                      stacked above HEAD (implies -b; wins when both are given)
   -n, --limit N       public commits to show, including the merge-base (default 1)
       --base REV      override the public base (default: nearest remote trunk, e.g.
                       origin/HEAD, origin/main, origin/master, upstream/main)
@@ -726,22 +745,132 @@ function commit_header {
     print -r -- "${g}${symbol}  ${hash_color}${hashes[$i]}${C_RESET}${text_color}  ${time_str}${author_seg}${text_reset}${ref_display}${extra}"
 }
 
+function subtree_epoch {
+    # REPLY = newest commit epoch in the -B draft subtree rooted at $1.
+    # Memoized in main's sub_epoch assoc (dynamic scoping); used to order
+    # sibling subtrees and trees newest-first.
+    local c=$1
+    if [[ -n ${sub_epoch[$c]} ]]; then
+        REPLY=${sub_epoch[$c]}
+        return
+    fi
+    local best=${epochs[${midx[$c]}]}
+    local k=
+    for k in ${=tree_kids[$c]:-}; do
+        subtree_epoch $k
+        (( REPLY > best )) && best=$REPLY
+    done
+    sub_epoch[$c]=$best
+    REPLY=$best
+}
+
+function draft_subject {
+    # REPLY = "  subject" for draft commit $1, in HEAD-text color when $1 is
+    # HEAD (and the @ hasn't moved to a wdir node).
+    local c=$1
+    local tc=
+    [[ $c == $head_sha ]] && (( ! has_changes )) && tc=$C_HEAD_TEXT
+    REPLY="  ${tc}${subjects[${midx[$c]}]}${tc:+$C_RESET}"
+}
+
+function emit_subtree {
+    # -B renderer: print the draft subtree rooted at $1 top-down, ending with
+    # $1's header row. The caller owns $1's subject row — a "│  subject"
+    # continuation when $1 sits under another draft, or the join bend when $1
+    # closes a column. $2 is the row prefix of this subtree's column (the trunk
+    # gutter plus one "│ " per enclosing draft column).
+    #
+    # Layout mirrors sapling (verified against renderdag output): at a fork,
+    # the spine child — the one on HEAD's path, else the newest subtree —
+    # continues this column straight up; every other child renders as its own
+    # complete column one level deeper, newest first, closing with a ├─╯ bend
+    # right above the fork commit. Chains stay contiguous, so joins only ever
+    # bend the innermost open column into its parent's.
+    local c=$1 prefix=$2
+    local -a kids=(${=tree_kids[$c]:-})
+    if (( ${#kids} )); then
+        local spine_kid= k= kep= kbest=
+        for k in $kids; do
+            [[ -n ${on_head_path[$k]} ]] && spine_kid=$k
+        done
+        if [[ -z $spine_kid ]]; then
+            kbest=-1
+            for k in $kids; do
+                subtree_epoch $k
+                kep=$REPLY
+                if (( kep > kbest )) || { (( kep == kbest )) && [[ $k > $spine_kid ]]; }; then
+                    spine_kid=$k
+                    kbest=$kep
+                fi
+            done
+        fi
+        local -a sides=(${kids:#$spine_kid}) sorted=()
+        local pick= pbest=
+        while (( ${#sides} )); do
+            pick=${sides[1]}
+            subtree_epoch $pick
+            pbest=$REPLY
+            for k in ${sides[2,-1]}; do
+                subtree_epoch $k
+                kep=$REPLY
+                if (( kep > pbest )) || { (( kep == pbest )) && [[ $k > $pick ]]; }; then
+                    pick=$k
+                    pbest=$kep
+                fi
+            done
+            sorted+=("$pick")
+            sides=(${sides:#$pick})
+        done
+        emit_subtree $spine_kid "$prefix"
+        draft_subject $spine_kid
+        print -r -- "${prefix}│${REPLY}"
+        print -r -- "${prefix}│"
+        for k in $sorted; do
+            emit_subtree $k "${prefix}│ "
+            draft_subject $k
+            print -r -- "${prefix}├─╯${REPLY}"
+            print -r -- "${prefix}│"
+        done
+    fi
+    # The wdir node draws directly above HEAD, at HEAD's depth — with -B the @
+    # can sit mid-tree, under stacked branches.
+    if (( has_changes )) && [[ $c == $head_sha ]]; then
+        local wdir_text_reset=
+        [[ -n $C_HEAD_TEXT ]] && wdir_text_reset=$C_RESET
+        print -r -- "${prefix}@  ${C_DRAFT_HASH}Uncommitted changes${C_RESET}${C_HEAD_TEXT}  ${wdir_summary}${wdir_text_reset}"
+        local stat_line=
+        for stat_line in $wdir_stat; do
+            print -r -- "${prefix}│ ${stat_line}"
+        done
+        print -r -- "${prefix}│"
+    fi
+    local symbol=o text_color=
+    if [[ $c == $head_sha ]] && (( ! has_changes )); then
+        symbol=@
+        text_color=$C_HEAD_TEXT
+    fi
+    commit_header ${midx[$c]} $symbol "$prefix" "$C_DRAFT_HASH" "$text_color" 0 ''
+}
+
 function main {
     # Option parsing (zparseopts is a zsh builtin; -K keeps the ARG_LIMIT default
     # when -n is not passed). Operates on main's own positional params ("$@").
-    local -a ARG_LIMIT=(1) ARG_BASE=() ARG_UNCOMMITTED=() ARG_ALL_AUTHORS=() ARG_BRANCHES=() ARG_HELP=()
+    local -a ARG_LIMIT=(1) ARG_BASE=() ARG_UNCOMMITTED=() ARG_ALL_AUTHORS=() ARG_BRANCHES=() ARG_BRANCHES_FULL=() ARG_HELP=()
     zparseopts -D -E -K -- \
         {n,-limit}:=ARG_LIMIT \
         -base:=ARG_BASE \
         {u,-uncommitted}=ARG_UNCOMMITTED \
         {A,-all-authors}=ARG_ALL_AUTHORS \
         {b,-branches}=ARG_BRANCHES \
+        {B,-branches-full}=ARG_BRANCHES_FULL \
         {h,-help}=ARG_HELP \
         || { smartlog_usage >&2; exit 2; }
     (( ${#ARG_HELP} )) && { smartlog_usage; exit 0; }
     local all_authors=0
     (( ${#ARG_ALL_AUTHORS} )) && all_authors=1
-    local show_branches=0
+    local full_branches=0
+    (( ${#ARG_BRANCHES_FULL} )) && full_branches=1
+    local show_branches=$full_branches
     (( ${#ARG_BRANCHES} )) && show_branches=1
 
     NOW=$EPOCHSECONDS
@@ -819,6 +948,11 @@ function main {
     # remote ref, which %D still carries, already identifies it).
     local -A attach_names bnodes_at bnode_ahead
     local -a bnode_heads=() extra_publics=()
+    # -B forest: every draft commit reachable first-parent from any head, its
+    # first parent, its draft children, and the tree roots grouped by the public
+    # commit they hang off.
+    local -A in_draft first_parent tree_kids roots_at
+    local -a bfull_heads=() bfull_forks=()
     if (( show_branches )); then
         # for-each-ref's format language has no %x1f escape (that's pretty-format
         # only); a space separator is safe — ref names cannot contain spaces.
@@ -839,9 +973,23 @@ function main {
                     break
                 fi
             done
-            if [[ $bhead == $fork ]] || (( ${drafts[(Ie)$bhead]} )); then
+            if [[ $bhead == $fork ]]; then
+                # merged into the trunk: label its public commit instead
                 (( name_hidden )) || attach_names[$bhead]+="$bname "
-                [[ $bhead == $fork ]] && extra_publics+=("$fork")
+                extra_publics+=("$fork")
+                continue
+            fi
+            if (( full_branches )); then
+                # -B: the head commit itself will be on screen — its name always
+                # attaches; queue the chain for the forest built below.
+                (( name_hidden )) || attach_names[$bhead]+="$bname "
+                bfull_heads+=("$bhead")
+                bfull_forks+=("$fork")
+                continue
+            fi
+            if (( ${drafts[(Ie)$bhead]} )); then
+                # points at a commit already in the current stack: label it
+                (( name_hidden )) || attach_names[$bhead]+="$bname "
                 continue
             fi
             # Two branches on the same head share one node (both names attach).
@@ -854,6 +1002,41 @@ function main {
             fi
             (( name_hidden )) || attach_names[$bhead]+="$bname "
         done < <(git for-each-ref --format='%(refname:short) %(objectname)' refs/heads 2>/dev/null)
+    fi
+
+    # -B: union every head's first-parent chain into a forest. Shared prefixes
+    # dedup via in_draft (a chain stops as soon as it meets a known commit), so
+    # branches forking from a draft — or containing HEAD, i.e. stacked above it —
+    # come out as one tree with fork nodes, exactly what sapling renders. Each
+    # tree's root hangs off the public commit its first parent points at (which
+    # joins the shown publics); HEAD's own chain is walked first so the tree
+    # containing HEAD prefers its path as the spine.
+    if (( full_branches )); then
+        local -a fheads=("$head_sha" $bfull_heads) fforks=("$merge_base" $bfull_forks)
+        local -i fx=0
+        local fline=
+        local -a fw
+        for ((fx = 1; fx <= ${#fheads}; fx++)); do
+            [[ ${fheads[fx]} == ${fforks[fx]} ]] && continue      # no drafts (HEAD on trunk)
+            [[ -n ${in_draft[${fheads[fx]}]} ]] && continue       # chain already absorbed
+            while IFS= read -r fline; do
+                fw=(${=fline})                                     # sha first-parent [more...]
+                [[ -n ${in_draft[${fw[1]}]} ]] && break            # rest is shared prefix
+                in_draft[${fw[1]}]=1
+                first_parent[${fw[1]}]=${fw[2]:-}
+            done < <(git rev-list --first-parent --parents ${fheads[fx]} "^${fforks[fx]}" 2>/dev/null)
+        done
+        local dc= dp=
+        for dc in ${(k)in_draft}; do
+            dp=${first_parent[$dc]}
+            [[ -z $dp ]] && continue
+            if [[ -n ${in_draft[$dp]} ]]; then
+                tree_kids[$dp]+="$dc "
+            else
+                roots_at[$dp]+="$dc "
+                extra_publics+=("$dp")
+            fi
+        done
     fi
 
     local -a publics
@@ -907,7 +1090,11 @@ function main {
     fi
 
     local -a all_shas
-    all_shas=("${drafts[@]}" "${bnode_heads[@]}" "${publics[@]}")
+    if (( full_branches )); then
+        all_shas=(${(k)in_draft} "${publics[@]}")
+    else
+        all_shas=("${drafts[@]}" "${bnode_heads[@]}" "${publics[@]}")
+    fi
     (( ${#all_shas} == 0 )) && die "Nothing to display"
 
     local commit_data
@@ -945,13 +1132,55 @@ function main {
     # branch rows take the matching gutter prefix, and their join row bends
     # ╭─╯ off a dotted-or-empty spine but forks ├─╯ off a solid one — exactly
     # how sapling renders it.
+    # -B: mark HEAD's first-parent path (spine preference), find HEAD's tree
+    # root, and memoize per-subtree newest epochs for ordering.
+    local -A on_head_path sub_epoch
+    local head_root=
+    if (( full_branches )) && [[ -n ${in_draft[$head_sha]} ]]; then
+        head_root=$head_sha
+        on_head_path[$head_root]=1
+        while [[ -n ${first_parent[$head_root]} && -n ${in_draft[${first_parent[$head_root]}]} ]]; do
+            head_root=${first_parent[$head_root]}
+            on_head_path[$head_root]=1
+        done
+    fi
+
     local -a plan=()
     local pp= bh=
     for pp in $publics; do
-        [[ $pp == $merge_base ]] && plan+=(stack)
-        for bh in ${=bnodes_at[$pp]:-}; do
-            plan+=("branch:$bh")
-        done
+        if (( full_branches )); then
+            # wdir-only pseudo-stack when HEAD sits on a public commit
+            [[ $pp == $merge_base && -z $head_root ]] && (( has_changes )) && plan+=(stack)
+            # Trees hanging off this public: HEAD's tree first (topmost, like
+            # the single-stack layout), the rest newest-subtree first.
+            local -a proots=(${=roots_at[$pp]:-}) tordered=()
+            local tpick= tbest= tep=
+            if (( ${proots[(Ie)$head_root]} )); then
+                tordered+=("$head_root")
+                proots=(${proots:#$head_root})
+            fi
+            while (( ${#proots} )); do
+                tpick=${proots[1]}
+                subtree_epoch $tpick; tbest=$REPLY
+                for bh in ${proots[2,-1]}; do
+                    subtree_epoch $bh; tep=$REPLY
+                    if (( tep > tbest )) || { (( tep == tbest )) && [[ $bh > $tpick ]]; }; then
+                        tpick=$bh
+                        tbest=$tep
+                    fi
+                done
+                tordered+=("$tpick")
+                proots=(${proots:#$tpick})
+            done
+            for bh in $tordered; do
+                plan+=("tree:$bh")
+            done
+        else
+            [[ $pp == $merge_base ]] && plan+=(stack)
+            for bh in ${=bnodes_at[$pp]:-}; do
+                plan+=("branch:$bh")
+            done
+        fi
         plan+=("public:$pp")
     done
 
@@ -1009,6 +1238,15 @@ function main {
                     print -r -- "${g}│"
                 fi
             done
+            ;;
+        (tree:*)
+            # -B: a full draft tree above its fork-point public commit.
+            bh=${el#tree:}
+            emit_subtree $bh "$g"
+            draft_subject $bh
+            print -r -- "${join}${REPLY}"
+            print -r -- "│"
+            spine='│'
             ;;
         (branch:*)
             bh=${el#branch:}

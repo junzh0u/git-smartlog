@@ -463,4 +463,5 @@ Screenshot it with:
   git-smartlog -n 4   # also reveals Alice's compact public nodes
   git-smartlog -b     # every other local branch: nodes, (+N), labels, ╷ elision
   git-smartlog -b -u  # branches + the uncommitted node together
+  git-smartlog -B     # full stacks for every branch, sapling-style
 EOF

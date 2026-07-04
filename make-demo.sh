@@ -5,8 +5,15 @@
 #   ./make-demo.sh [target-dir]        # default: /tmp/git-smartlog-demo
 #
 # It lays out a small HTTP-client project with:
-#   - a public base on origin/master (one compact commit by someone else, one by you)
+#   - a public base on origin/master (two compact commits by someone else, one by you)
 #   - a 3-commit draft stack on a feature branch
+#   - other local branches exercising EVERY signal the -b view renders:
+#       hotfix             sibling node at the trunk tip, pushed — so the green
+#                          origin/hotfix shows and the local name stays hidden
+#       fix/redirect-loop  forks from the OLDEST public commit, so the public
+#                          commit between it and the tip elides to a dotted ╷
+#       prod               parked exactly on a public commit — labels it (cyan)
+#       wip/backoff        points at an interior draft of the stack — labels it
 #   - uncommitted working-tree changes exercising EVERY signal the -u node renders:
 #       A staged-new   ? untracked     M modified    D deleted      R renamed
 #       T typechange   S submodule     U unmerged    plus a +x mode flip
@@ -137,6 +144,20 @@ git -c protocol.file.allow=always submodule add -q "$SUBREMOTE" vendor/timeutil
 
 git add .
 commit $((now - 5*DAY)) "Alice Ng" "alice@example.com" "Initial project scaffold"
+scaffold=$(git rev-parse HEAD)   # fork point for fix/redirect-loop and prod below
+
+# A second public commit by Alice. In the -b view nothing forks here, so it is
+# the commit that gets ELIDED between the tip and the scaffold (the dotted ╷).
+cat > errors.go <<'EOF'
+package httpx
+
+import "errors"
+
+// ErrMaxRetries is returned when every attempt has failed.
+var ErrMaxRetries = errors.New("httpx: retry budget exhausted")
+EOF
+git add errors.go
+commit $((now - 4*DAY)) "Alice Ng" "alice@example.com" "Introduce typed errors"
 
 # A dependency bump, by you, becomes the origin/master tip.
 cat > go.mod <<'EOF'
@@ -163,6 +184,44 @@ const Version = "0.1.1"
 EOF
 git add version.go
 commit $((now - 2*DAY)) "Jun Zhou" "junz@example.com" "Patch release 0.1.1"
+# Pushed, so in -b its node is identified by the green origin/hotfix remote ref
+# and the local name stays hidden (same-name remote at the same commit).
+git push -q origin hotfix
+
+# ── Branches only the -b view reveals ───────────────────────────────────────────
+# fix/redirect-loop forks from the OLDEST public commit: its fork point joins the
+# public column and Alice's "Introduce typed errors" in between elides to ╷.
+git switch -q -c fix/redirect-loop "$scaffold"
+cat > redirect.go <<'EOF'
+package httpx
+
+// MaxRedirects caps how many redirects a single request may follow.
+const MaxRedirects = 10
+EOF
+git add redirect.go
+commit $((now - 26*HOUR)) "Jun Zhou" "junz@example.com" "Cap redirect chains at 10 hops"
+cat > redirect.go <<'EOF'
+package httpx
+
+import "net/http"
+
+// MaxRedirects caps how many redirects a single request may follow.
+const MaxRedirects = 10
+
+// checkRedirect aborts a request once MaxRedirects is exceeded.
+func checkRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= MaxRedirects {
+		return http.ErrUseLastResponse
+	}
+	return nil
+}
+EOF
+git add redirect.go
+commit $((now - 25*HOUR)) "Jun Zhou" "junz@example.com" "Abort redirect loops via CheckRedirect"
+
+# prod is parked exactly on a public commit — -b labels that commit (cyan)
+# instead of drawing a node.
+git branch prod "$scaffold"
 
 # ── Draft stack on the feature branch ──────────────────────────────────────────
 git switch -q -c feat/retry-backoff master
@@ -241,6 +300,9 @@ func (p Policy) Wait(n int) {
 EOF
 git add backoff.go retry.go
 commit $((now - 3*HOUR)) "Jun Zhou" "junz@example.com" "Add exponential backoff with jitter"
+# wip/backoff points at this interior draft — -b labels the draft (cyan) rather
+# than drawing a separate node.
+git branch wip/backoff
 
 cat > http_client.go <<'EOF'
 package httpx
@@ -398,5 +460,7 @@ Screenshot it with:
   sl                  # alias: git-smartlog -u  (uncommitted node, every signal)
   git smartstat       # just the uncommitted stat block, standalone
   git-smartlog        # plain draft stack, no uncommitted node
-  git-smartlog -n 3   # also reveals Alice's compact public node
+  git-smartlog -n 4   # also reveals Alice's compact public nodes
+  git-smartlog -b     # every other local branch: nodes, (+N), labels, ╷ elision
+  git-smartlog -b -u  # branches + the uncommitted node together
 EOF

@@ -7,9 +7,10 @@ self-contained zsh script. The same file doubles as
 It renders the current branch's **draft stack** — the first-parent chain of your
 local (unpushed) commits — drawn on top of its nearest **public** (pushed) base,
 with relative timestamps, authors, and ref decorations, closely mirroring the
-output of Sapling's `sl`. Two opt-in extensions depart from that mirror: `-u`
-adds an uncommitted-changes node, and `-b`/`-B` fold your other local branches
-into the graph — see below.
+output of Sapling's `sl`. Three opt-in extensions depart from that mirror: `-u`
+adds an uncommitted-changes node, `-c`/`-C` draw per-file change stats under
+your commits, and `-b`/`-B` fold your other local branches into the graph — see
+below.
 
 The story behind it is in
 [this post](https://junz.info/writing/git-smartlog/).
@@ -127,6 +128,38 @@ o  c7283c280b  Wednesday at 09:47  junz  origin/master
 │
 o  a21fc72b55  Tuesday at 09:47
 │
+~
+```
+
+With `-c` / `--changes` (implies `-u`), the same per-file stat block attaches to
+**`HEAD` itself** whenever the working tree is clean — so you always see *some*
+changes: the uncommitted ones when dirty, `HEAD`'s own (against its first parent)
+when not. `-C` / `--changes-all` goes further and draws the block under **every
+commit in the current stack**, clean or dirty, with the uncommitted node still on
+top; sitting directly on the trunk (no stack), it covers **every public commit in
+view** instead — pair it with `-n` to review recent history. Bodies share `-u`'s
+markers, colors, and grouping, and close with a dim
+`N files, +X -Y` total line (the wdir node keeps its total in the header):
+
+```text
+$ git smartlog -C
+  @  Uncommitted changes  1 file, +9 -0
+  │  ? retry_test.go | 9 +++++++++
+  │
+  o  498df929d5  Today at 09:33  junz  feat/retry-backoff*
+  │  Wire backoff into the HTTP client
+  │  M http_client.go | 2 +-
+  │  M retry.go       | 8 +++++++-
+  │  2 files, +9 -1
+  │
+  o  ba482d2f0b  Today at 06:47  junz
+  │  Add exponential backoff with jitter
+  │  A retry.go | 41 ++++++++++++++++++++++
+  │  1 file, +41 -0
+╭─╯
+│
+o  c7283c280b  Wednesday at 09:47  junz  origin/master
+│  Bump dependencies
 ~
 ```
 
@@ -298,9 +331,15 @@ git config --global alias.sl smartlog
 ## Usage
 
 ```
-usage: git-smartlog [-u] [-A] [-b|-B] [-n N] [--base REV]
+usage: git-smartlog [-u] [-c|-C] [-A] [-b|-B] [-n N] [--base REV]
 
   -u, --uncommitted   show a synthetic node for uncommitted working-tree changes
+  -c, --changes       implies -u; when the working tree is clean, show the HEAD
+                      commit's per-file changes under its node instead
+  -C, --changes-all   show per-file changes under every commit in the current
+                      stack — or under every public commit in view when HEAD
+                      sits on the trunk (pair with -n) — plus the uncommitted
+                      node (implies -u; wins over -c)
   -A, --all-authors   show author + subject for every commit, including public
                       commits by other authors (default: those render compact)
   -b, --branches      show every other local branch as a single node above its
@@ -440,6 +479,10 @@ empty tree so staged and untracked files still show as additions.)
   which treats the working copy as a commit in its own right; Sapling surfaces
   working-copy changes differently. Treat `-u` as a git-smartlog-only convenience,
   not a parity feature.
+- **`-c`/`-C` are extensions too.** They reuse `-u`'s stat body for committed
+  changes — `-c` under `HEAD` when the tree is clean, `-C` under every commit in
+  the current stack (or every public commit in view, when sitting on the trunk).
+  Sapling has no equivalent; the default output is unchanged.
 - **`-A`/`--all-authors` is an extension.** By default, public commits by other
   authors render metadata-only, exactly as Sapling does. `-A` turns that off and
   shows the author and subject for every commit — handy on shared branches where

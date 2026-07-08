@@ -331,7 +331,7 @@ git config --global alias.sl smartlog
 ## Usage
 
 ```
-usage: git-smartlog [-u] [-c|-C] [-A] [-b|-B] [-n N] [--base REV]
+usage: git-smartlog [-u] [-c|-C] [-A] [-b|-B] [-n N] [-N] [--base REV]
 
   -u, --uncommitted   show a synthetic node for uncommitted working-tree changes
   -c, --changes       implies -u; when the working tree is clean, show the HEAD
@@ -348,9 +348,14 @@ usage: git-smartlog [-u] [-c|-C] [-A] [-b|-B] [-n N] [--base REV]
                       sapling — including forks at draft commits and commits
                       stacked above HEAD (implies -b; wins when both are given)
   -n, --limit N       public commits to show, including the merge-base (default 1)
+  -N, --no-limit      don't stop at the -n window: keep streaming older public
+                      history below it — lazily when paged — like git log
       --base REV      override the public base (default: nearest remote trunk, e.g.
                       origin/HEAD, origin/main, origin/master, upstream/main)
   -h, --help          show this help and exit
+
+Output taller than the terminal is paged ($GIT_PAGER / core.pager / $PAGER /
+less; GIT_PAGER=cat disables paging).
 ```
 
 ## git-smartstat
@@ -455,6 +460,11 @@ empty tree so staged and untracked files still show as additions.)
   (`$GIT_PAGER`, then git's `core.pager`, then `$PAGER`, then `less` with
   `LESS=FRX` like git). Output that fits, or piped/redirected output, prints
   directly; `GIT_PAGER=cat` disables paging. Colors survive the pager.
+- **Infinite scroll** — with `-N`/`--no-limit`, the public column doesn't stop
+  at the `-n` window: older history keeps streaming below it — lazily when
+  paged, so scrolling keeps revealing commits like plain `git log`, down to
+  the root commit. Without `-N` the window and the trailing `~` truncation row
+  are unconditional.
 
 ## Differences from Sapling's `sl`
 

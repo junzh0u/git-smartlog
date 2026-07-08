@@ -152,6 +152,13 @@
 #   directly; GIT_PAGER=cat disables paging outright. Colors survive paging:
 #   the TTY is probed once up front (TTY_OUT), before the wrapper's capture
 #   pipe hides it from the renderer.
+#   Infinite scroll (opt-in via -N/--no-limit): the public column does not
+#   stop at the -n window — older first-parent history streams below it, row
+#   by row, as the consumer takes it. Paged, pipe backpressure keeps `git
+#   log` from walking ahead of the pager, so scrolling keeps revealing
+#   commits like plain `git log`, down to the root commit; piped, the full
+#   history streams out, also like `git log`. Without -N the -n window and
+#   the trailing "~" are unconditional, paged or not.
 #
 # Relative time — mirrors sapling's `smartdate(date, 5400, age, simpledate)`:
 #   - Elapsed <= 5400s (90 min): `age()` — walks scales year→second and uses the
@@ -191,7 +198,7 @@ function die {
 }
 
 function smartlog_usage {
-    print -r -- "usage: $PROG [-u] [-c|-C] [-A] [-b|-B] [-n N] [--base REV]
+    print -r -- "usage: $PROG [-u] [-c|-C] [-A] [-b|-B] [-n N] [-N] [--base REV]
 
 Sapling-style smartlog using only git: the current branch's draft stack
 drawn on top of its nearest public (pushed) base.
@@ -211,9 +218,14 @@ drawn on top of its nearest public (pushed) base.
                       sapling — including forks at draft commits and commits
                       stacked above HEAD (implies -b; wins when both are given)
   -n, --limit N       public commits to show, including the merge-base (default 1)
+  -N, --no-limit      don't stop at the -n window: keep streaming older public
+                      history below it — lazily when paged — like git log
       --base REV      override the public base (default: nearest remote trunk, e.g.
                       origin/HEAD, origin/main, origin/master, upstream/main)
-  -h, --help          show this help and exit"
+  -h, --help          show this help and exit
+
+Output taller than the terminal is paged (\$GIT_PAGER / core.pager / \$PAGER /
+less; GIT_PAGER=cat disables paging)."
 }
 
 function smartstat_usage {
@@ -939,9 +951,10 @@ function emit_subtree {
 function main {
     # Option parsing (zparseopts is a zsh builtin; -K keeps the ARG_LIMIT default
     # when -n is not passed). Operates on main's own positional params ("$@").
-    local -a ARG_LIMIT=(1) ARG_BASE=() ARG_UNCOMMITTED=() ARG_CHANGES=() ARG_CHANGES_ALL=() ARG_ALL_AUTHORS=() ARG_BRANCHES=() ARG_BRANCHES_FULL=() ARG_HELP=()
+    local -a ARG_LIMIT=(1) ARG_NO_LIMIT=() ARG_BASE=() ARG_UNCOMMITTED=() ARG_CHANGES=() ARG_CHANGES_ALL=() ARG_ALL_AUTHORS=() ARG_BRANCHES=() ARG_BRANCHES_FULL=() ARG_HELP=()
     zparseopts -D -E -K -- \
         {n,-limit}:=ARG_LIMIT \
+        {N,-no-limit}=ARG_NO_LIMIT \
         -base:=ARG_BASE \
         {u,-uncommitted}=ARG_UNCOMMITTED \
         {c,-changes}=ARG_CHANGES \
@@ -961,6 +974,8 @@ function main {
     local show_changes=0 show_changes_all=0
     (( ${#ARG_CHANGES} )) && show_changes=1
     (( ${#ARG_CHANGES_ALL} )) && show_changes_all=1
+    local no_limit=0
+    (( ${#ARG_NO_LIMIT} )) && no_limit=1
 
     NOW=$EPOCHSECONDS
     local today
@@ -1298,7 +1313,24 @@ function main {
         plan+=("public:$pp")
     done
 
-    local spine= el= g= join= symbol= text_color= subject_body= seg= aheadseg=
+    # The planned window, then its final row: the "~" truncation marker — or,
+    # with -N, the streamed-history tail (unless the bottom shown public IS
+    # the root commit, in which case nothing is truncated to stream).
+    render_plan
+    if (( no_limit )) &&
+       git rev-parse --verify --quiet "${publics[-1]}^" >/dev/null 2>&1; then
+        stream_public_tail ${publics[-1]}
+    else
+        print -r -- "~"
+    fi
+}
+
+function render_plan {
+    # Emit the planned render — the whole graph except its final row (the "~"
+    # truncation marker, or the first spine row of the -N streamed-history
+    # tail), which main appends. Reads main's plan/metadata/C_* state via
+    # dynamic scoping, like the other render helpers.
+    local spine= el= g= join= symbol= text_color= subject_body= seg= aheadseg= pp= bh=
     local -i pl_i=0 pub_i=0 n_plan=${#plan} idx=0 di=0
     local is_compact=0
     for ((pl_i = 1; pl_i <= n_plan; pl_i++)); do
@@ -1426,9 +1458,10 @@ function main {
             subject_body="  ${text_color}${subjects[idx]}${text_color:+$C_RESET}"
             (( is_compact )) && subject_body=
             if (( pl_i == n_plan )); then
+                # The final row below this ("~" or the -N tail's spine)
+                # belongs to main — see the render_plan call there.
                 print -r -- "│${subject_body}"
                 print_commit_stat $pp "│"
-                print -r -- "~"
             else
                 # Segment down to the next shown public: solid when it's a
                 # parent of this commit, dotted ╷ when commits are elided.
@@ -1441,6 +1474,55 @@ function main {
             fi
             ;;
         esac
+    done
+}
+
+function stream_public_tail {
+    # -N/--no-limit: instead of cutting history at "~", keep the public column
+    # going — walk first-parent history below the bottom shown public and emit
+    # rows as the consumer takes them. Paged, that means lazily: pipe
+    # backpressure keeps `git log` from walking ahead of the pager, so
+    # scrolling keeps revealing older commits like plain `git log`, and a
+    # pager quit kills the walk via SIGPIPE. Piped, the full history streams
+    # out, also like `git log`. Rendering matches the planned public rows:
+    # same compact-header rule, refs, and -C stat bodies when publics are the
+    # stat targets (computed lazily, one commit at a time). Metadata appends
+    # to main's arrays via dynamic scoping. Ends with "~" only at the root
+    # commit; tformat (not format) terminates the last record with a newline
+    # so the root commit survives the read loop.
+    local from=$1
+    print -r -- "│"
+    local fsha= h= e= a= ae= r= p= s= subject_body=
+    local -i idx=0 is_compact=0
+    git log --first-parent --abbrev=10 --decorate=full \
+        --pretty=tformat:'%H%x1f%h%x1f%at%x1f%al%x1f%ae%x1f%D%x1f%P%x1f%s' \
+        "${from}^" 2>/dev/null |
+    while IFS=$'\x1f' read -r fsha h e a ae r p s; do
+        [[ -z $fsha ]] && continue
+        all_shas+=("$fsha"); hashes+=("$h"); epochs+=("$e"); authors+=("$a")
+        author_emails+=("$ae"); refs+=("$r"); parents+=("$p"); subjects+=("$s")
+        idx=${#hashes}
+        # Same compact-public rule as the plan loop; a tail commit is never
+        # HEAD (HEAD sits at or above the merge-base, always in the window).
+        is_compact=0
+        (( ! all_authors )) && [[ $ae != $my_email ]] && is_compact=1
+        if (( show_changes_all && ! n_drafts )); then
+            uncommitted_stat $color_on 4 $fsha
+            if (( STAT_HAS_CHANGES )); then
+                local -a st_body=("${STAT_BODY[@]}" " ${C_DIM}${STAT_SUMMARY}${C_RESET}")
+                commit_stats[$fsha]=${(F)st_body}
+            fi
+        fi
+        commit_header $idx o '' "$C_PUBLIC_HASH" '' $is_compact ''
+        subject_body="  ${subjects[idx]}"
+        (( is_compact )) && subject_body=
+        print -r -- "│${subject_body}"
+        print_commit_stat $fsha "│"
+        if [[ -n $p ]]; then
+            print -r -- "│"
+        else
+            print -r -- "~"   # root commit: history exhausted
+        fi
     done
 }
 
@@ -1482,49 +1564,68 @@ function smartstat_main {
     done
 }
 
+function stream_or_print {
+    # The paging decision, line-granular and stream-preserving: buffer stdin
+    # only until it either ends (fits on screen → print it straight) or hits
+    # ROWS lines (can't fit → replay the buffered head into the pager and let
+    # the rest stream through lazily via cat, which inherits this stdin). $1 =
+    # the pager command; it may carry its own arguments (core.pager often
+    # does, e.g. "less -S"), so run it through eval like git does.
+    local -a buf=()
+    local line=
+    while IFS= read -r line; do
+        buf+=("$line")
+        if (( ${#buf} >= ROWS )); then
+            { print -rl -- "${buf[@]}"; cat; } | eval "$1"
+            return
+        fi
+    done
+    (( ${#buf} )) && print -rl -- "${buf[@]}"
+}
+
 function run_paged {
-    # Run "$@" with stdout captured; print the output directly when it fits
-    # within the terminal height, else pipe it through the pager ($GIT_PAGER,
-    # then git's core.pager, then $PAGER, then less). Only engages when stdout
-    # is a TTY — piped/redirected output runs the command untouched. Color and
-    # width decisions inside the capture still see the real terminal via
-    # TTY_OUT, probed before the capture pipe replaced stdout.
+    # Run "$@" with stdout piped through stream_or_print: printed directly
+    # when the output ends within the terminal height, else paged ($GIT_PAGER,
+    # then git's core.pager, then $PAGER, then less) with the remainder
+    # streaming through lazily (that laziness is what makes -N viable — see
+    # stream_public_tail). Only engages when stdout is a TTY —
+    # piped/redirected output runs the command untouched, as does
+    # GIT_PAGER=cat. The pipe hides the terminal from the renderer, so color
+    # and stat-width decisions inside consult TTY_OUT, probed up front.
     if (( ! TTY_OUT )); then
         "$@"
         return
     fi
-    local out= rc=0
-    out=$("$@") || rc=$?
-    (( rc )) && return $rc
-    [[ -z $out ]] && return 0
 
     # Terminal height from the controlling terminal (same probe as the stat
     # width in uncommitted_stat), $LINES then 24 as fallbacks. An output of
-    # exactly `rows` lines already scrolls once the prompt prints — page it.
-    local rows=24 termsize=
+    # exactly ROWS lines already scrolls once the prompt prints — page it.
+    typeset -g ROWS=24
+    local termsize=
     termsize=$(stty size </dev/tty 2>/dev/null)   # "rows cols"
-    if [[ $termsize == <->" "<-> ]]; then
-        rows=${termsize%% *}
+    if [[ $termsize == <->" "<-> ]] && (( ${termsize%% *} > 0 )); then
+        ROWS=${termsize%% *}
     elif [[ -n $LINES ]] && (( LINES > 0 )); then
-        rows=$LINES
-    fi
-    if (( ${#${(@f)out}} < rows )); then
-        print -r -- "$out"
-        return 0
+        ROWS=$LINES
     fi
 
     local pager=${GIT_PAGER:-$(git config core.pager 2>/dev/null)}
     [[ -z $pager ]] && pager=${PAGER:-less}
     if [[ $pager == cat ]]; then
-        print -r -- "$out"
-        return 0
+        "$@"
+        return
     fi
     # Match git's pager defaults: F quit-if-one-screen, R pass ANSI colors
     # through, X skip termcap init/deinit (so short output isn't cleared away).
     export LESS=${LESS:-FRX}
-    # The pager value may carry its own arguments (core.pager often does, e.g.
-    # "less -S"), so run it through eval like git does.
-    print -r -- "$out" | eval "$pager"
+    # pipefail so the renderer's failure survives the pipeline; a pager quit
+    # mid-stream kills the renderer with SIGPIPE (141) — that's a clean exit.
+    setopt local_options pipefail
+    local rc=0
+    "$@" | stream_or_print "$pager"
+    rc=$?
+    (( rc == 141 )) && rc=0
+    return $rc
 }
 
 # Multi-call dispatch on the invocation name: git-smartstat runs only the stat

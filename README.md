@@ -451,6 +451,10 @@ empty tree so staged and untracked files still show as additions.)
   beyond it.
 - **Color** — ANSI, automatically suppressed when stdout isn't a TTY or `NO_COLOR`
   is set.
+- **Paging** — output taller than the terminal is piped through a pager
+  (`$GIT_PAGER`, then git's `core.pager`, then `$PAGER`, then `less` with
+  `LESS=FRX` like git). Output that fits, or piped/redirected output, prints
+  directly; `GIT_PAGER=cat` disables paging. Colors survive the pager.
 
 ## Differences from Sapling's `sl`
 

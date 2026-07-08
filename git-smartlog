@@ -144,6 +144,15 @@
 #     +/- stat graph (green/red) after the '|' is left intact
 #   - Symbols (@/o) and lines (│ ╭─╯): default
 #
+# Paging
+#   When stdout is a TTY and the rendered output is taller than the terminal,
+#   it is piped through a pager — $GIT_PAGER, then `git config core.pager`,
+#   then $PAGER, then `less` (with LESS=FRX exported when $LESS is unset, like
+#   git). Output that fits on screen, or piped/redirected output, prints
+#   directly; GIT_PAGER=cat disables paging outright. Colors survive paging:
+#   the TTY is probed once up front (TTY_OUT), before the wrapper's capture
+#   pipe hides it from the renderer.
+#
 # Relative time — mirrors sapling's `smartdate(date, 5400, age, simpledate)`:
 #   - Elapsed <= 5400s (90 min): `age()` — walks scales year→second and uses the
 #     smallest where n>=2 (or seconds always); "1" is singularized.
@@ -158,14 +167,22 @@
 #
 # Iteration
 #   `sl` is aliased to git-smartlog, so escape with `\sl` to invoke the real
-#   sapling binary. To validate, compare BOTH rendered text AND raw ANSI codes:
+#   sapling binary. To validate, compare BOTH rendered text AND raw ANSI codes
+#   (GIT_PAGER=cat: `script` hands the run a pty, which would engage the pager):
 #       diff <(\sl) <(git smartlog)
-#       diff <(\sl --color=always | cat -v) <(script -q /dev/null git-smartlog | cat -v)
+#       diff <(\sl --color=always | cat -v) <(script -q /dev/null env GIT_PAGER=cat git-smartlog | cat -v)
 #   Sapling emits "[0;Nm" forms while this script uses "[Nm"; visually identical.
 
 zmodload zsh/datetime  # provides $EPOCHSECONDS and builtin strftime (no fork)
 
 PROG=${0:t}
+
+# Whether stdout is a terminal, probed ONCE before anything runs: run_paged
+# captures main's output via $(...), which makes stdout a pipe, so color and
+# stat-width decisions inside the renderer must consult this global instead of
+# testing [[ -t 1 ]] themselves.
+typeset -g TTY_OUT=0
+[[ -t 1 ]] && TTY_OUT=1
 
 function die {
     # Print an error message to stderr and exit.
@@ -402,7 +419,7 @@ function uncommitted_stat {
     # (`stty size </dev/tty`) — not `<&1`, which inside $(...) is the capture pipe,
     # not the tty — with $COLUMNS as a fallback.
     local stat_width=80
-    if [[ -t 1 ]]; then
+    if (( TTY_OUT )); then
         local termsize=
         termsize=$(stty size </dev/tty 2>/dev/null)   # "rows cols"
         if [[ $termsize == <->" "<-> ]]; then
@@ -996,7 +1013,7 @@ function main {
     # same code the standalone `git-smartstat` runs) — we just consume its
     # REPLY-style globals. Color matches the C_* palette gate below.
     local color_on=0
-    [[ -t 1 && -z $NO_COLOR ]] && color_on=1
+    (( TTY_OUT )) && [[ -z $NO_COLOR ]] && color_on=1
 
     local has_changes=0 wdir_summary=
     local -a wdir_stat
@@ -1151,7 +1168,7 @@ function main {
     fi
 
     local C_PUBLIC_HASH= C_DRAFT_HASH= C_HEAD_TEXT= C_REF= C_BRANCH= C_LOCAL= C_DIM= C_RESET=
-    if [[ -t 1 && -z $NO_COLOR ]]; then
+    if (( TTY_OUT )) && [[ -z $NO_COLOR ]]; then
         C_PUBLIC_HASH=$'\e[33m'
         C_DRAFT_HASH=$'\e[93;1m'
         C_HEAD_TEXT=$'\e[35m'
@@ -1451,7 +1468,7 @@ function smartstat_main {
     case $when in
         always) color_on=1 ;;
         never)  color_on=0 ;;
-        auto)   [[ -t 1 && -z $NO_COLOR ]] && color_on=1 ;;
+        auto)   (( TTY_OUT )) && [[ -z $NO_COLOR ]] && color_on=1 ;;
         *)      print -ru2 -- "$PROG: invalid --color: $when (use auto, always, or never)"
                 exit 2 ;;
     esac
@@ -1465,9 +1482,55 @@ function smartstat_main {
     done
 }
 
+function run_paged {
+    # Run "$@" with stdout captured; print the output directly when it fits
+    # within the terminal height, else pipe it through the pager ($GIT_PAGER,
+    # then git's core.pager, then $PAGER, then less). Only engages when stdout
+    # is a TTY — piped/redirected output runs the command untouched. Color and
+    # width decisions inside the capture still see the real terminal via
+    # TTY_OUT, probed before the capture pipe replaced stdout.
+    if (( ! TTY_OUT )); then
+        "$@"
+        return
+    fi
+    local out= rc=0
+    out=$("$@") || rc=$?
+    (( rc )) && return $rc
+    [[ -z $out ]] && return 0
+
+    # Terminal height from the controlling terminal (same probe as the stat
+    # width in uncommitted_stat), $LINES then 24 as fallbacks. An output of
+    # exactly `rows` lines already scrolls once the prompt prints — page it.
+    local rows=24 termsize=
+    termsize=$(stty size </dev/tty 2>/dev/null)   # "rows cols"
+    if [[ $termsize == <->" "<-> ]]; then
+        rows=${termsize%% *}
+    elif [[ -n $LINES ]] && (( LINES > 0 )); then
+        rows=$LINES
+    fi
+    if (( ${#${(@f)out}} < rows )); then
+        print -r -- "$out"
+        return 0
+    fi
+
+    local pager=${GIT_PAGER:-$(git config core.pager 2>/dev/null)}
+    [[ -z $pager ]] && pager=${PAGER:-less}
+    if [[ $pager == cat ]]; then
+        print -r -- "$out"
+        return 0
+    fi
+    # Match git's pager defaults: F quit-if-one-screen, R pass ANSI colors
+    # through, X skip termcap init/deinit (so short output isn't cleared away).
+    export LESS=${LESS:-FRX}
+    # The pager value may carry its own arguments (core.pager often does, e.g.
+    # "less -S"), so run it through eval like git does.
+    print -r -- "$out" | eval "$pager"
+}
+
 # Multi-call dispatch on the invocation name: git-smartstat runs only the stat
-# block, anything else (git-smartlog) runs the full smartlog.
+# block, anything else (git-smartlog) runs the full smartlog paged (see
+# run_paged; smartstat's block is short and feeds scripts, so it never pages).
 case $PROG in
     git-smartstat|smartstat) smartstat_main "$@" ;;
-    *)                       main "$@" ;;
+    *)                       run_paged main "$@" ;;
 esac

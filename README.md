@@ -328,6 +328,18 @@ up as a subcommand — run it as `git smartlog`. A short alias is handy:
 git config --global alias.sl smartlog
 ```
 
+Zsh completions live in [`completions/`](completions/): put `_git-smartlog` and
+`_git-smartstat` in a directory on your `fpath` before `compinit` runs. They
+complete the direct commands, and — with zsh's own `_git` — the `git smartlog` /
+`git smartstat` subcommand forms too; add the subcommand *names* to `git <TAB>`
+with:
+
+```sh
+zstyle ':completion:*:*:git:*' user-commands \
+    smartlog:'sapling-style smartlog' \
+    smartstat:'uncommitted working-tree stat block'
+```
+
 ## Usage
 
 ```

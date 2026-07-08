@@ -1,0 +1,38 @@
+#compdef git-smartlog
+# Completion for git-smartlog. The file/function name follows zsh's _git
+# dispatch convention (_git-<subcommand>), so it completes both the direct
+# `git-smartlog` command and the `git smartlog` subcommand form.
+
+_git-smartlog_base() {
+    # --base takes a revision. Inside `git smartlog` completion the _git
+    # helpers are loaded — use the real ref completer; standalone they may
+    # not be, so fall back to plain ref names.
+    if (( $+functions[__git_references] )); then
+        __git_references
+    else
+        # _call_program evals its arguments, so the whole command goes as one
+        # pre-quoted string — bare %(...) would parse as a glob qualifier.
+        local -a refs
+        refs=(HEAD ${(f)"$(_call_program references \
+            "git for-each-ref --format='%(refname:short)' refs/heads refs/remotes 2>/dev/null")"})
+        local expl
+        _description -V references expl 'reference'
+        compadd "${expl[@]}" -a refs
+    fi
+}
+
+_git-smartlog() {
+    _arguments -s -S \
+        '(-u --uncommitted)'{-u,--uncommitted}'[show a node for uncommitted working-tree changes]' \
+        '(-c --changes -C --changes-all)'{-c,--changes}'[implies -u; show HEAD'\''s per-file changes when the tree is clean]' \
+        '(-C --changes-all -c --changes)'{-C,--changes-all}'[per-file changes under every commit in view (implies -u)]' \
+        '(-A --all-authors)'{-A,--all-authors}'[full headers for every commit, incl. other authors'\'' public ones]' \
+        '(-b --branches -B --branches-full)'{-b,--branches}'[other local branches as single nodes above their fork points]' \
+        '(-B --branches-full -b --branches)'{-B,--branches-full}'[other local branches as full stacks (implies -b)]' \
+        '(-n --limit)'{-n+,--limit=}'[public commits to show, incl. merge-base (default 1)]:count' \
+        '(-N --no-limit)'{-N,--no-limit}'[keep streaming older history below the -n window, like git log]' \
+        '--base=[override the public base (default: nearest remote trunk)]:revision:_git-smartlog_base' \
+        '(- *)'{-h,--help}'[show help and exit]'
+}
+
+_git-smartlog "$@"

@@ -12,6 +12,10 @@
 # command (`git smartstat`). Dispatch is on the invocation name ($PROG) at the
 # bottom; both names share `uncommitted_stat`, so there's no duplicated logic.
 #
+# Completion: completions/_git-smartlog, completions/_git-smartstat — keep in
+# sync when adding/changing options. The _git-<name> naming makes them cover
+# the `git smartlog` / `git smartstat` subcommand forms too.
+#
 # Differences from sapling's `sl`
 #   - Single stack only: renders the CURRENT HEAD's first-parent draft chain plus
 #     its public base. Sapling's smartlog renders EVERY draft branch as its own

@@ -1,0 +1,11 @@
+#compdef git-smartstat
+# Completion for git-smartstat (the multi-call smartstat entry point of
+# git-smartlog). The _git-<subcommand> name also covers `git smartstat`.
+
+_git-smartstat() {
+    _arguments -s -S \
+        '--color=[colorize output]:when:(auto always never)' \
+        '(- *)'{-h,--help}'[show help and exit]'
+}
+
+_git-smartstat "$@"

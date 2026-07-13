@@ -195,6 +195,21 @@ PROG=${0:t}
 typeset -g TTY_OUT=0
 [[ -t 1 ]] && TTY_OUT=1
 
+# Non-ASCII paths: with core.quotePath on (git's default) every path-emitting
+# porcelain command (status --porcelain, ls-files, diff --stat/--raw) C-quotes
+# them into octal escapes ('"\350\275\256..."'). That's not just unreadable — the
+# quoted strings aren't real paths, so ls-files output fails the `*/` dir test
+# and `git add -N` (which needs actual paths), silently dropping non-ASCII
+# untracked entries from the stat block. Turn it off for every git call at once
+# via git's environment-config mechanism (same precedence as `-c`), appending
+# after any config the caller already passed this way.
+() {
+    local n=${GIT_CONFIG_COUNT:-0}
+    export GIT_CONFIG_KEY_$n=core.quotepath
+    export GIT_CONFIG_VALUE_$n=false
+    export GIT_CONFIG_COUNT=$(( n + 1 ))
+}
+
 function die {
     # Print an error message to stderr and exit.
     print -ru2 -- "$PROG: $1"
@@ -481,7 +496,7 @@ function uncommitted_stat {
     # folds to ONE 'dir/' entry (mirroring `git status`), while loose untracked files
     # (under a dir that also holds tracked paths) appear individually. Unlike `git
     # status --porcelain`, ls-files does not C-quote paths that merely contain spaces,
-    # so spaced names survive intact (non-ASCII still quotes — a pre-existing limit).
+    # so spaced names survive intact (non-ASCII too — quotePath is off globally, above).
     # Only loose files are intent-added to the overlay below, so each untracked dir
     # renders as a single "dir/ | N files" line instead of expanding to every file.
     # Commit mode has no untracked entries by definition — skip the scan.
@@ -560,10 +575,12 @@ function uncommitted_stat {
             # gitcol = git's current '|' column (shared by every git line); maxafter =
             # widest graph (ANSI stripped), so the column can grow only as far as keeps
             # the longest line within stat_width.
+            # All widths here are DISPLAY cells, not characters — zsh's (m) flag —
+            # so CJK/wide names (2 cells per char) keep the '|' column aligned.
             local gitcol=0 maxafter=0 count_w=0 bl= bcol= aft= d=
             for bl in $STAT_BODY; do
                 [[ $bl == *\|* ]] || continue
-                bcol=${bl%%\|*}; (( ${#bcol} > gitcol )) && gitcol=${#bcol}
+                bcol=${bl%%\|*}; (( ${(m)#bcol} > gitcol )) && gitcol=${(m)#bcol}
                 aft=${(S)${bl#"$bcol"}//$'\e['*m/}   # "| graph" incl '|', ANSI stripped
                 (( ${#aft} > maxafter )) && maxafter=${#aft}
                 # git right-justifies each per-file line count to a shared width (the
@@ -575,7 +592,7 @@ function uncommitted_stat {
                     (( ${#match[1]} > count_w )) && count_w=${#match[1]}
             done
             local avail=0
-            for d in $untracked_dirs; do (( ${#d} > avail )) && avail=${#d}; done
+            for d in $untracked_dirs; do (( ${(m)#d} > avail )) && avail=${(m)#d}; done
             (( gitcol > 2 && gitcol - 2 > avail )) && avail=$(( gitcol - 2 ))
             # Cap so " name | <graph or 'N files'>" still fits stat_width.
             local suffixmax=$maxafter
@@ -595,11 +612,14 @@ function uncommitted_stat {
             # with more files than git's widest line count is the only case that can
             # still overhang — git's numbers are already printed, so they can't grow).
             local -a dir_disp=() dir_n=() dir_path=()
-            local disp= n= f= keep= max_dir_w=0
+            local disp= n= f= max_dir_w=0
             for d in $untracked_dirs; do
                 disp=$d
-                if (( ${#disp} > avail )); then
-                    keep=$(( avail - 3 )); disp="...${disp[-keep,-1]}"
+                if (( ${(m)#disp} > avail )); then
+                    # Trim leading chars until the "...tail" fits avail cells; a wide
+                    # char can drop 2 cells per trim, so test width, not char count.
+                    while (( ${(m)#disp} > avail - 3 )); do disp=${disp[2,-1]}; done
+                    disp="...$disp"
                 fi
                 n=0
                 for f in $all_untracked; do [[ ${f[1,${#d}]} == "$d" ]] && (( n++ )); done
@@ -613,7 +633,7 @@ function uncommitted_stat {
             for ((di = 1; di <= ${#dir_disp}; di++)); do
                 disp=${dir_disp[di]}; n=${dir_n[di]}
                 word=files; (( n == 1 )) && word=file
-                nsp=$(( avail - ${#disp} )); pad=
+                nsp=$(( avail - ${(m)#disp} )); pad=
                 (( nsp > 0 )) && pad=${(l:$nsp:)pad}
                 STAT_BODY+=(" ${disp}${pad} | ${(l:$count_w:)n} ${word}")
                 wdir_mark[$disp]='?'
@@ -706,7 +726,7 @@ function uncommitted_stat {
                     trail=${body##*[! ]}            # trailing spaces
                     nf=${body%"$trail"}             # the display name
                     if (( name_w > 0 )); then        # re-pad to the shared column so a
-                        tw=$(( name_w - ${#nf} + 1 ))   # collapsed dir (maybe wider than
+                        tw=$(( name_w - ${(m)#nf} + 1 ))  # collapsed dir (maybe wider than
                         (( tw < 1 )) && tw=1            # git's own names) and the git
                         trail=${(l:$tw:)sp}            # lines keep one aligned '|'
                     fi

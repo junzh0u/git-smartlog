@@ -309,7 +309,9 @@ isn't a TTY (as in these captures) or when `NO_COLOR` is set.
 
 That's it. The script sources nothing else, so you can drop it anywhere on your
 `PATH` and run it — `-u` included, since its stat block is computed in-file (see
-[git-smartstat](#git-smartstat)).
+[git-smartstat](#git-smartstat)). The one opt-in extra is `-p`/`--prs`, which
+needs the [GitHub CLI (`gh`)](https://cli.github.com/); everything else works
+without it.
 
 ## Install
 
@@ -343,7 +345,7 @@ zstyle ':completion:*:*:git:*' user-commands \
 ## Usage
 
 ```
-usage: git-smartlog [-u] [-c|-C] [-A] [-b|-B] [-n N] [-N] [--base REV]
+usage: git-smartlog [-u] [-c|-C] [-A] [-b|-B] [-p] [-n N] [-N] [--base REV]
 
   -u, --uncommitted   show a synthetic node for uncommitted working-tree changes
   -c, --changes       implies -u; when the working tree is clean, show the HEAD
@@ -359,6 +361,9 @@ usage: git-smartlog [-u] [-c|-C] [-A] [-b|-B] [-n N] [-N] [--base REV]
   -B, --branches-full show every other local branch as its FULL stack, like
                       sapling — including forks at draft commits and commits
                       stacked above HEAD (implies -b; wins when both are given)
+  -p, --prs           tag shown branch names that have a GitHub PR with its
+                      "#N" — colored by PR state, hyperlinked on a TTY
+                      (needs the gh CLI)
   -n, --limit N       public commits to show, including the merge-base (default 1)
   -N, --no-limit      don't stop at the -n window: keep streaming older public
                       history below it — lazily when paged — like git log
@@ -463,9 +468,14 @@ empty tree so staged and untracked files still show as additions.)
   above its root's public fork point: the spine child continues the column, side
   subtrees open one column deeper per fork level and close with a `├─╯` bend
   above the fork. Includes commits stacked above `HEAD`.
-- **Relative time** — mirrors Sapling's `smartdate`: `age()` ("N minutes ago")
-  within 90 minutes, calendar-day `simpledate()` ("Yesterday", "Mon DD", …)
-  beyond it.
+- **PR numbers** — with `-p`/`--prs`, every branch name shown on a commit (the
+  active branch, a remote bookmark, or a `-b`/`-B` local) that has a GitHub PR
+  gets a trailing `#N` tag: blue for open, dim blue for draft, magenta for
+  merged, red for closed — and, on a color-capable TTY, an OSC 8 hyperlink to
+  the PR. One `gh pr list --state all` call maps branches to PRs (a branch with
+  several keeps an open one over closed/merged, else the newest); the trunk's
+  own branch is skipped so its long-merged PR doesn't tag every graph. Needs
+  the GitHub CLI (`gh`); a failed listing warns and renders without tags.
 - **Color** — ANSI, automatically suppressed when stdout isn't a TTY or `NO_COLOR`
   is set.
 - **Paging** — output taller than the terminal is piped through a pager

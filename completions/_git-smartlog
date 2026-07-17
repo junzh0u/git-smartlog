@@ -29,6 +29,7 @@ _git-smartlog() {
         '(-A --all-authors)'{-A,--all-authors}'[full headers for every commit, incl. other authors'\'' public ones]' \
         '(-b --branches -B --branches-full)'{-b,--branches}'[other local branches as single nodes above their fork points]' \
         '(-B --branches-full -b --branches)'{-B,--branches-full}'[other local branches as full stacks (implies -b)]' \
+        '(-p --prs)'{-p,--prs}'[tag shown branch names with their GitHub PR number (needs gh)]' \
         '(-n --limit)'{-n+,--limit=}'[public commits to show, incl. merge-base (default 1)]:count' \
         '(-N --no-limit)'{-N,--no-limit}'[keep streaming older history below the -n window, like git log]' \
         '--base=[override the public base (default: nearest remote trunk)]:revision:_git-smartlog_base' \

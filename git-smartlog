@@ -4,7 +4,9 @@
 # Self-contained: a single file depending only on zsh and git, so it can be
 # downloaded and run standalone — no other files from this repo are required. The
 # -u (uncommitted changes) node needs nothing external either: its stat block is
-# computed by the in-file `uncommitted_stat` function.
+# computed by the in-file `uncommitted_stat` function. The one exception is
+# -p/--prs, which shells out to the GitHub CLI (`gh`) — opt-in, and everything
+# else keeps working without gh installed.
 #
 # Multi-call: this same file is also `git-smartstat`. Symlink it under that name
 # (e.g. `ln -s git-smartlog git-smartstat`) and the git-smartstat name runs ONLY
@@ -120,6 +122,18 @@
 #     with a trailing "*" like sapling's active bookmark — but only when no remote
 #     branch of the same name exists (else just the remote shows, e.g. master ->
 #     origin/master); inactive local branches and tags are dropped
+#   - PR numbers (opt-in via -p/--prs; needs the GitHub CLI `gh`): every branch
+#     name a row displays — the active branch, a remote bookmark, or a -b/-B
+#     local — whose branch has a GitHub PR gets a trailing "#N" tag after the
+#     refs, colored by PR state (see Colors) and deduped per PR number (a
+#     local+remote pair tags once). On a color-capable TTY the tag is also an
+#     OSC 8 hyperlink to the PR (same gate as the palette, so piped output
+#     stays plain). One `gh pr list --state all` call (newest 200 PRs) maps
+#     head branch -> PR up front; a branch with several PRs keeps an open one
+#     over closed/merged, else the newest. The trunk's own branch name is
+#     skipped — its long-merged PR would tag the base of every graph. Missing
+#     gh dies with a clear error; a failed listing (non-GitHub remote,
+#     unauthenticated gh) warns on stderr and renders without tags.
 #   - Last draft's subject line uses ╭─╯ instead of │ to bend into column 0
 #   - Final line is ~ (truncation indicator)
 #   - Compact public nodes (default; disable with -A/--all-authors): a public
@@ -140,6 +154,10 @@
 #   - Local branch names from -b: cyan (\e[36m) — deliberately NOT sapling's
 #     sl.book green, so local branches stand apart from green remote refs; the
 #     "(+N)" commits-since-fork tag: dim (\e[2m)
+#   - PR tags from -p: open blue (\e[34m) — deliberately NOT GitHub's open
+#     green, so tags stand apart from green remote refs (and read as links);
+#     draft dim blue (\e[2;34m), merged magenta (\e[35m), closed red (\e[31m).
+#     Each tag is also an OSC 8 hyperlink to its PR when the palette is on
 #   - Uncommitted body (-u): a change marker prefixes each filename; marker and name
 #     are colored by kind — A added green (\e[32m), ? untracked dim green (\e[2;32m),
 #     D deleted red (\e[31m), R/C renamed blue (\e[34m), T typechange magenta
@@ -217,7 +235,7 @@ function die {
 }
 
 function smartlog_usage {
-    print -r -- "usage: $PROG [-u] [-c|-C] [-A] [-b|-B] [-n N] [-N] [--base REV]
+    print -r -- "usage: $PROG [-u] [-c|-C] [-A] [-b|-B] [-p] [-n N] [-N] [--base REV]
 
 Sapling-style smartlog using only git: the current branch's draft stack
 drawn on top of its nearest public (pushed) base.
@@ -236,6 +254,9 @@ drawn on top of its nearest public (pushed) base.
   -B, --branches-full show every other local branch as its FULL stack, like
                       sapling — including forks at draft commits and commits
                       stacked above HEAD (implies -b; wins when both are given)
+  -p, --prs           tag shown branch names that have a GitHub PR with its
+                      \"#N\" — colored by PR state, hyperlinked on a TTY
+                      (needs the gh CLI)
   -n, --limit N       public commits to show, including the merge-base (default 1)
   -N, --no-limit      don't stop at the -n window: keep streaming older public
                       history below it — lazily when paged — like git log
@@ -321,6 +342,12 @@ typeset -g NOW TODAY_MIDNIGHT CURRENT_YEAR ACTIVE_BRANCH
 typeset -g STAT_HAS_CHANGES STAT_SUMMARY
 typeset -ga STAT_BODY
 
+# filter_refs' second output: the branch names behind the refs it kept — the
+# active branch's name (even when its display is folded into the same-name
+# remote) and each remote bookmark stripped of its remote — i.e. the -p/--prs
+# lookup keys for the row being rendered.
+typeset -ga REF_BRANCHES
+
 # Helpers set REPLY instead of printing — avoids a $(...) subshell per call.
 
 function age {
@@ -402,18 +429,24 @@ function filter_refs {
     # alphabetically; join with a single space.
     local raw=$1
     REPLY=
+    REF_BRANCHES=()
     [[ -z $raw ]] && return
     local -a out
     local r
     for r in ${(@s:, :)raw}; do
         case $r in
             "HEAD -> "*)                                    # active branch (HEAD's)
-                [[ -n $ACTIVE_BRANCH ]] && out+=("$ACTIVE_BRANCH") ;;
+                [[ -n $ACTIVE_BRANCH ]] && out+=("$ACTIVE_BRANCH")
+                # PR lookup key even when the name display folds into the
+                # same-name remote (ACTIVE_BRANCH empty).
+                REF_BRANCHES+=("${r#HEAD -> refs/heads/}") ;;
             HEAD) ;;                                        # detached-HEAD self-ref
             */HEAD) ;;                                      # remote default-branch pointer
             refs/heads/*) ;;                                # inactive local branch — hidden
             refs/tags/*) ;;                                 # tag — smartlog doesn't show tags
-            refs/remotes/*) out+=("${r#refs/remotes/}") ;;  # remote bookmark → origin/master
+            refs/remotes/*)                                 # remote bookmark → origin/master
+                out+=("${r#refs/remotes/}")
+                REF_BRANCHES+=("${${r#refs/remotes/}#*/}") ;;
             *) out+=("$r") ;;
         esac
     done
@@ -835,10 +868,41 @@ function commit_header {
     local ref_display=
     (( ${#colored} )) && ref_display="  ${(j: :)colored}"
 
+    # -p/--prs: tag the row's shown branch names that have a PR with "#N",
+    # colored by PR state. Candidates are REF_BRANCHES from filter_refs (the
+    # active branch, remote bookmarks) plus the -b/-B names attached above.
+    # The trunk's branch is skipped (its merged PR would tag every base row);
+    # dedupe by PR number so a local+remote pair tags once.
+    local pr_seg=
+    if (( ${#pr_num} )); then
+        local -a pr_tags=()
+        local -A pr_seen=()
+        local cand= pn= pcol= ptext=
+        for cand in $REF_BRANCHES ${(o)${=attach_names[${all_shas[$i]}]:-}}; do
+            [[ $cand == $trunk_name ]] && continue
+            pn=${pr_num[$cand]:-}
+            [[ -z $pn || -n ${pr_seen[$pn]:-} ]] && continue
+            pr_seen[$pn]=1
+            case ${pr_state[$cand]} in
+                OPEN)   pcol=$C_PR_OPEN ;;
+                DRAFT)  pcol=$C_PR_DRAFT ;;
+                MERGED) pcol=$C_PR_MERGED ;;
+                *)      pcol=$C_PR_CLOSED ;;
+            esac
+            # On a color-capable TTY the tag is also an OSC 8 hyperlink to the
+            # PR — same gate as the palette, so piped output stays plain text.
+            ptext="#${pn}"
+            (( color_on )) && [[ -n ${pr_url[$cand]:-} ]] &&
+                ptext=$'\e]8;;'"${pr_url[$cand]}"$'\e\\'"${ptext}"$'\e]8;;\e\\'
+            pr_tags+=("${pcol}${ptext}${C_RESET}")
+        done
+        (( ${#pr_tags} )) && pr_seg="  ${(j: :)pr_tags}"
+    fi
+
     local author_seg="  ${authors[$i]}"
     (( compact )) && author_seg=
 
-    print -r -- "${g}${symbol}  ${hash_color}${hashes[$i]}${C_RESET}${text_color}  ${time_str}${author_seg}${text_reset}${ref_display}${extra}"
+    print -r -- "${g}${symbol}  ${hash_color}${hashes[$i]}${C_RESET}${text_color}  ${time_str}${author_seg}${text_reset}${ref_display}${pr_seg}${extra}"
 }
 
 function subtree_epoch {
@@ -975,7 +1039,7 @@ function emit_subtree {
 function main {
     # Option parsing (zparseopts is a zsh builtin; -K keeps the ARG_LIMIT default
     # when -n is not passed). Operates on main's own positional params ("$@").
-    local -a ARG_LIMIT=(1) ARG_NO_LIMIT=() ARG_BASE=() ARG_UNCOMMITTED=() ARG_CHANGES=() ARG_CHANGES_ALL=() ARG_ALL_AUTHORS=() ARG_BRANCHES=() ARG_BRANCHES_FULL=() ARG_HELP=()
+    local -a ARG_LIMIT=(1) ARG_NO_LIMIT=() ARG_BASE=() ARG_UNCOMMITTED=() ARG_CHANGES=() ARG_CHANGES_ALL=() ARG_ALL_AUTHORS=() ARG_BRANCHES=() ARG_BRANCHES_FULL=() ARG_PRS=() ARG_HELP=()
     zparseopts -D -E -K -- \
         {n,-limit}:=ARG_LIMIT \
         {N,-no-limit}=ARG_NO_LIMIT \
@@ -986,6 +1050,7 @@ function main {
         {A,-all-authors}=ARG_ALL_AUTHORS \
         {b,-branches}=ARG_BRANCHES \
         {B,-branches-full}=ARG_BRANCHES_FULL \
+        {p,-prs}=ARG_PRS \
         {h,-help}=ARG_HELP \
         || { smartlog_usage >&2; exit 2; }
     (( ${#ARG_HELP} )) && { smartlog_usage; exit 0; }
@@ -1000,6 +1065,8 @@ function main {
     (( ${#ARG_CHANGES_ALL} )) && show_changes_all=1
     local no_limit=0
     (( ${#ARG_NO_LIMIT} )) && no_limit=1
+    local show_prs=0
+    (( ${#ARG_PRS} )) && show_prs=1
 
     NOW=$EPOCHSECONDS
     local today
@@ -1045,6 +1112,36 @@ function main {
     local merge_base
     merge_base=$(git merge-base HEAD "$base_ref" 2>/dev/null) ||
         die "No merge-base between HEAD and $base_ref"
+
+    # -p/--prs: one `gh pr list` call up front maps head branch -> PR number +
+    # state; commit_header consults the maps per row. State folds isDraft into
+    # DRAFT; a branch with several PRs keeps an open one over closed/merged,
+    # else the newest (gh lists newest first). trunk_name is the base branch's
+    # bare name, excluded from tagging in commit_header. gh is this script's
+    # only dependency beyond zsh+git, gated behind the flag: absent gh dies, a
+    # failed listing (non-GitHub remote, unauthenticated) warns and renders
+    # without tags.
+    local -A pr_num pr_state pr_url
+    local trunk_name=${base_ref#*/}
+    if (( show_prs )); then
+        (( $+commands[gh] )) || die "--prs needs the GitHub CLI (gh) on PATH"
+        local pr_data=
+        pr_data=$(gh pr list --state all --limit 200 \
+            --json number,state,isDraft,headRefName,url \
+            --jq '.[] | [.headRefName, .number, .state, .isDraft, .url] | @tsv' 2>/dev/null) ||
+            print -ru2 -- "$PROG: warning: 'gh pr list' failed (not a GitHub repo, or gh not authenticated); no PR numbers shown"
+        local pb= pn= ps= pd= pu=
+        while IFS=$'\t' read -r pb pn ps pd pu; do
+            [[ -z $pb ]] && continue
+            [[ $ps == OPEN && $pd == true ]] && ps=DRAFT
+            if [[ -z ${pr_num[$pb]:-} ]] ||
+               [[ ${pr_state[$pb]} != (OPEN|DRAFT) && $ps == (OPEN|DRAFT) ]]; then
+                pr_num[$pb]=$pn
+                pr_state[$pb]=$ps
+                pr_url[$pb]=$pu
+            fi
+        done <<< "$pr_data"
+    fi
 
     # Uncommitted working-tree changes render as a synthetic "Uncommitted changes"
     # node on top of HEAD; the @ marker moves there, since that's where the working
@@ -1207,6 +1304,7 @@ function main {
     fi
 
     local C_PUBLIC_HASH= C_DRAFT_HASH= C_HEAD_TEXT= C_REF= C_BRANCH= C_LOCAL= C_DIM= C_RESET=
+    local C_PR_OPEN= C_PR_DRAFT= C_PR_MERGED= C_PR_CLOSED=
     if (( TTY_OUT )) && [[ -z $NO_COLOR ]]; then
         C_PUBLIC_HASH=$'\e[33m'
         C_DRAFT_HASH=$'\e[93;1m'
@@ -1216,6 +1314,10 @@ function main {
         C_LOCAL=$'\e[36m'
         C_DIM=$'\e[2m'
         C_RESET=$'\e[0m'
+        C_PR_OPEN=$'\e[34m'     # open — blue, distinct from green remote refs
+        C_PR_DRAFT=$'\e[2;34m'  # draft — dim blue
+        C_PR_MERGED=$'\e[35m'   # merged — magenta (GitHub purple)
+        C_PR_CLOSED=$'\e[31m'   # closed — red
     fi
 
     # -c/-C: per-commit stat bodies, drawn under the owning commit's subject

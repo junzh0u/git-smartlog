@@ -474,8 +474,11 @@ empty tree so staged and untracked files still show as additions.)
   merged, red for closed — and, on a color-capable TTY, an OSC 8 hyperlink to
   the PR. One `gh pr list --state all` call maps branches to PRs (a branch with
   several keeps an open one over closed/merged, else the newest); the trunk's
-  own branch is skipped so its long-merged PR doesn't tag every graph. Needs
-  the GitHub CLI (`gh`); a failed listing warns and renders without tags.
+  own branch is skipped so its long-merged PR doesn't tag every graph. The
+  call's ~1s API round-trip is cached per repo in the git dir for
+  `$GIT_SMARTLOG_PR_TTL` seconds (default 60; `0` forces a refetch), so only
+  the first `-p` run in a while pays it. Needs the GitHub CLI (`gh`); a failed
+  listing warns and falls back to the stale cache, else renders without tags.
 - **Color** — ANSI, automatically suppressed when stdout isn't a TTY or `NO_COLOR`
   is set.
 - **Paging** — output taller than the terminal is piped through a pager

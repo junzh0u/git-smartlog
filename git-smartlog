@@ -131,9 +131,13 @@
 #     stays plain). One `gh pr list --state all` call (newest 200 PRs) maps
 #     head branch -> PR up front; a branch with several PRs keeps an open one
 #     over closed/merged, else the newest. The trunk's own branch name is
-#     skipped — its long-merged PR would tag the base of every graph. Missing
+#     skipped — its long-merged PR would tag the base of every graph. The
+#     call's ~1s+ API round-trip is cached per repo in the git dir
+#     (smartlog-pr-cache) for $GIT_SMARTLOG_PR_TTL seconds (default 60; 0
+#     forces a refetch), so only the first -p run in a while pays it. Missing
 #     gh dies with a clear error; a failed listing (non-GitHub remote,
-#     unauthenticated gh) warns on stderr and renders without tags.
+#     unauthenticated gh, offline) warns on stderr and renders from the stale
+#     cache when one exists, else without tags.
 #   - Last draft's subject line uses ╭─╯ instead of │ to bend into column 0
 #   - Final line is ~ (truncation indicator)
 #   - Compact public nodes (default; disable with -A/--all-authors): a public
@@ -203,6 +207,9 @@
 #   Sapling emits "[0;Nm" forms while this script uses "[Nm"; visually identical.
 
 zmodload zsh/datetime  # provides $EPOCHSECONDS and builtin strftime (no fork)
+# Only the zstat builtin (-p cache freshness) — a full zsh/stat load would
+# shadow the external `stat` command.
+zmodload -F zsh/stat b:zstat
 
 PROG=${0:t}
 
@@ -1125,11 +1132,33 @@ function main {
     local trunk_name=${base_ref#*/}
     if (( show_prs )); then
         (( $+commands[gh] )) || die "--prs needs the GitHub CLI (gh) on PATH"
+        # The gh call costs ~1s+ of API round-trip, so its TSV output is cached
+        # per repo (inside the git dir, so nothing needs gitignoring) with a
+        # short TTL — $GIT_SMARTLOG_PR_TTL seconds, default 60, 0 forces a
+        # refetch. The
+        # write is atomic (temp + rename beside it) so concurrent runs never
+        # read a half-written file; only a successful listing is cached, and a
+        # failed one (offline, unauthenticated) falls back to the stale cache
+        # when there is one — better a minute-old PR map than none.
+        local cache_file=$(git rev-parse --git-path smartlog-pr-cache)
+        local ttl=${GIT_SMARTLOG_PR_TTL:-60}
         local pr_data=
-        pr_data=$(gh pr list --state all --limit 200 \
+        local -a cache_mtime=()
+        if [[ -f $cache_file ]] && zstat -A cache_mtime +mtime -- "$cache_file" 2>/dev/null &&
+           (( EPOCHSECONDS - cache_mtime[1] < ttl )); then
+            pr_data=$(<"$cache_file")
+        elif pr_data=$(gh pr list --state all --limit 200 \
             --json number,state,isDraft,headRefName,url \
-            --jq '.[] | [.headRefName, .number, .state, .isDraft, .url] | @tsv' 2>/dev/null) ||
+            --jq '.[] | [.headRefName, .number, .state, .isDraft, .url] | @tsv' 2>/dev/null); then
+            { print -r -- "$pr_data" > "${cache_file}.$$" 2>/dev/null &&
+                mv -f "${cache_file}.$$" "$cache_file" 2>/dev/null; } ||
+                rm -f "${cache_file}.$$" 2>/dev/null
+        elif [[ -f $cache_file ]]; then
+            pr_data=$(<"$cache_file")
+            print -ru2 -- "$PROG: warning: 'gh pr list' failed; showing cached PR numbers"
+        else
             print -ru2 -- "$PROG: warning: 'gh pr list' failed (not a GitHub repo, or gh not authenticated); no PR numbers shown"
+        fi
         local pb= pn= ps= pd= pu=
         while IFS=$'\t' read -r pb pn ps pd pu; do
             [[ -z $pb ]] && continue

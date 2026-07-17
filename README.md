@@ -345,7 +345,7 @@ zstyle ':completion:*:*:git:*' user-commands \
 ## Usage
 
 ```
-usage: git-smartlog [-u] [-c|-C] [-A] [-b|-B] [-p] [-n N] [-N] [--base REV]
+usage: git-smartlog [-u] [-c|-C] [-A] [-b|-B] [-p|-P] [-n N] [-N] [--base REV]
 
   -u, --uncommitted   show a synthetic node for uncommitted working-tree changes
   -c, --changes       implies -u; when the working tree is clean, show the HEAD
@@ -363,7 +363,10 @@ usage: git-smartlog [-u] [-c|-C] [-A] [-b|-B] [-p] [-n N] [-N] [--base REV]
                       stacked above HEAD (implies -b; wins when both are given)
   -p, --prs           tag shown branch names that have a GitHub PR with its
                       "#N" — colored by PR state, hyperlinked on a TTY
-                      (needs the gh CLI)
+                      (needs the gh CLI); sticky — remembered per repo, so
+                      later runs tag PRs without the flag
+  -P, --no-prs        turn PR tagging off and forget the remembered -p
+                      (wins when both are given)
   -n, --limit N       public commits to show, including the merge-base (default 1)
   -N, --no-limit      don't stop at the -n window: keep streaming older public
                       history below it — lazily when paged — like git log
@@ -479,6 +482,11 @@ empty tree so staged and untracked files still show as additions.)
   `$GIT_SMARTLOG_PR_TTL` seconds (default 60; `0` forces a refetch), so only
   the first `-p` run in a while pays it. Needs the GitHub CLI (`gh`); a failed
   listing warns and falls back to the stale cache, else renders without tags.
+  `-p` is sticky per repo — it drops a marker file in the git dir
+  (`smartlog-pr-on`), so later runs tag PRs without the flag; `-P`/`--no-prs`
+  removes the marker and turns tagging off (winning when both are given).
+  When tagging is on only via the marker, a missing `gh` warns instead of
+  erroring, so plain runs keep working on a machine without it.
 - **Color** — ANSI, automatically suppressed when stdout isn't a TTY or `NO_COLOR`
   is set.
 - **Paging** — output taller than the terminal is piped through a pager

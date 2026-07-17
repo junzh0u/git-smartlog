@@ -138,6 +138,12 @@
 #     gh dies with a clear error; a failed listing (non-GitHub remote,
 #     unauthenticated gh, offline) warns on stderr and renders from the stale
 #     cache when one exists, else without tags.
+#     -p is STICKY per repo: it drops a marker file in the git dir
+#     (smartlog-pr-on), so later runs without the flag keep tagging PRs;
+#     -P/--no-prs removes the marker and turns tagging off (winning over -p
+#     when both are given). When tagging is on only via the marker, missing
+#     gh downgrades from the -p die to a warning — a plain run must keep
+#     working on a machine without gh.
 #   - Last draft's subject line uses ╭─╯ instead of │ to bend into column 0
 #   - Final line is ~ (truncation indicator)
 #   - Compact public nodes (default; disable with -A/--all-authors): a public
@@ -242,7 +248,7 @@ function die {
 }
 
 function smartlog_usage {
-    print -r -- "usage: $PROG [-u] [-c|-C] [-A] [-b|-B] [-p] [-n N] [-N] [--base REV]
+    print -r -- "usage: $PROG [-u] [-c|-C] [-A] [-b|-B] [-p|-P] [-n N] [-N] [--base REV]
 
 Sapling-style smartlog using only git: the current branch's draft stack
 drawn on top of its nearest public (pushed) base.
@@ -263,7 +269,10 @@ drawn on top of its nearest public (pushed) base.
                       stacked above HEAD (implies -b; wins when both are given)
   -p, --prs           tag shown branch names that have a GitHub PR with its
                       \"#N\" — colored by PR state, hyperlinked on a TTY
-                      (needs the gh CLI)
+                      (needs the gh CLI); sticky — remembered per repo, so
+                      later runs tag PRs without the flag
+  -P, --no-prs        turn PR tagging off and forget the remembered -p
+                      (wins when both are given)
   -n, --limit N       public commits to show, including the merge-base (default 1)
   -N, --no-limit      don't stop at the -n window: keep streaming older public
                       history below it — lazily when paged — like git log
@@ -1046,7 +1055,7 @@ function emit_subtree {
 function main {
     # Option parsing (zparseopts is a zsh builtin; -K keeps the ARG_LIMIT default
     # when -n is not passed). Operates on main's own positional params ("$@").
-    local -a ARG_LIMIT=(1) ARG_NO_LIMIT=() ARG_BASE=() ARG_UNCOMMITTED=() ARG_CHANGES=() ARG_CHANGES_ALL=() ARG_ALL_AUTHORS=() ARG_BRANCHES=() ARG_BRANCHES_FULL=() ARG_PRS=() ARG_HELP=()
+    local -a ARG_LIMIT=(1) ARG_NO_LIMIT=() ARG_BASE=() ARG_UNCOMMITTED=() ARG_CHANGES=() ARG_CHANGES_ALL=() ARG_ALL_AUTHORS=() ARG_BRANCHES=() ARG_BRANCHES_FULL=() ARG_PRS=() ARG_NO_PRS=() ARG_HELP=()
     zparseopts -D -E -K -- \
         {n,-limit}:=ARG_LIMIT \
         {N,-no-limit}=ARG_NO_LIMIT \
@@ -1058,6 +1067,7 @@ function main {
         {b,-branches}=ARG_BRANCHES \
         {B,-branches-full}=ARG_BRANCHES_FULL \
         {p,-prs}=ARG_PRS \
+        {P,-no-prs}=ARG_NO_PRS \
         {h,-help}=ARG_HELP \
         || { smartlog_usage >&2; exit 2; }
     (( ${#ARG_HELP} )) && { smartlog_usage; exit 0; }
@@ -1072,8 +1082,31 @@ function main {
     (( ${#ARG_CHANGES_ALL} )) && show_changes_all=1
     local no_limit=0
     (( ${#ARG_NO_LIMIT} )) && no_limit=1
-    local show_prs=0
+    # -p is sticky per repo: an explicit -p drops a marker file in the git dir
+    # (smartlog-pr-on, beside the PR cache — nothing needs gitignoring) so
+    # later runs tag PRs without the flag; an explicit -P/--no-prs removes the
+    # marker and turns tagging off, winning over -p when both are given. With
+    # neither flag, the marker decides. prs_explicit distinguishes flag-driven
+    # tagging (missing gh dies, as before) from marker-driven (missing gh only
+    # warns — a plain run must keep working on a machine without gh). Outside
+    # a repo --git-path fails; the empty marker path skips all of this and the
+    # repo checks below still die with their own messages.
+    local show_prs=0 prs_explicit=0
+    (( ${#ARG_PRS} || ${#ARG_NO_PRS} )) && prs_explicit=1
     (( ${#ARG_PRS} )) && show_prs=1
+    (( ${#ARG_NO_PRS} )) && show_prs=0
+    local pr_marker=$(git rev-parse --git-path smartlog-pr-on 2>/dev/null)
+    if [[ -n $pr_marker ]]; then
+        if (( ${#ARG_NO_PRS} )); then
+            rm -f -- "$pr_marker" 2>/dev/null
+        elif (( ${#ARG_PRS} && $+commands[gh] )); then
+            # Don't remember a -p that is about to die on the gh check below —
+            # a broken preference would make every later plain run warn.
+            : >| "$pr_marker" 2>/dev/null
+        elif [[ -f $pr_marker ]]; then
+            show_prs=1
+        fi
+    fi
 
     NOW=$EPOCHSECONDS
     local today
@@ -1130,8 +1163,14 @@ function main {
     # without tags.
     local -A pr_num pr_state pr_url
     local trunk_name=${base_ref#*/}
+    if (( show_prs )) && ! (( $+commands[gh] )); then
+        # Explicit -p keeps the hard error; the sticky marker alone must not
+        # break plain runs on a machine without gh.
+        (( prs_explicit )) && die "--prs needs the GitHub CLI (gh) on PATH"
+        print -ru2 -- "$PROG: warning: PR tagging is remembered for this repo but gh is missing; skipping (use -P to forget)"
+        show_prs=0
+    fi
     if (( show_prs )); then
-        (( $+commands[gh] )) || die "--prs needs the GitHub CLI (gh) on PATH"
         # The gh call costs ~1s+ of API round-trip, so its TSV output is cached
         # per repo (inside the git dir, so nothing needs gitignoring) with a
         # short TTL — $GIT_SMARTLOG_PR_TTL seconds, default 60, 0 forces a

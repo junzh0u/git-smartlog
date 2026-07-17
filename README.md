@@ -16,7 +16,7 @@ The story behind it is in
 [this post](https://junz.info/writing/git-smartlog/).
 
 <p align="center">
-  <img src="cover.png" alt="git-smartlog -u -n 2 -B -A output" width="600">
+  <img src="cover.png" alt="git-smartlog -u -n 2 -B -a output" width="600">
 </p>
 
 ## Example
@@ -46,7 +46,7 @@ it.
 
 Widen the public window with `-n`. Public commits authored by *someone else*
 render metadata-only (no author, no subject), exactly as Sapling does — see
-`a21fc72b55` and `80cf810025` below. Pass `-A` / `--all-authors` to turn that
+`a21fc72b55` and `80cf810025` below. Pass `-a` / `--all-authors` to turn that
 off and show the author and subject for every commit, including other people's
 public ones:
 
@@ -220,11 +220,11 @@ draws. All heads' chains union into a forest, so a branch **forking from a draft
 commit** shows as a real fork, and commits **stacked above `HEAD`** — a branch
 containing `HEAD` while you're checked out mid-stack — appear too, with `@` drawn
 mid-tree. On the same repo as above — `origin/hotfix` and `fix/redirect-loop`
-now show their complete stacks, and with `-A` the public commits by other authors
+now show their complete stacks, and with `-a` the public commits by other authors
 get their full headers too. This is the cover image up top:
 
 ```text
-$ git smartlog -u -n 2 -B -A
+$ git smartlog -u -n 2 -B -a
   @  Uncommitted changes  10 files, +30 -13
   │  A metrics.go           | 7 +++++++
   │  ? retry_test.go        | 9 +++++++++
@@ -345,7 +345,7 @@ zstyle ':completion:*:*:git:*' user-commands \
 ## Usage
 
 ```
-usage: git-smartlog [-u] [-c|-C] [-A] [-b|-B] [-p|-P] [-n N] [-N] [--base REV]
+usage: git-smartlog [-u] [-c|-C] [-a] [-b|-B] [-p|-P] [-n N] [-N] [--base REV]
 
   -u, --uncommitted   show a synthetic node for uncommitted working-tree changes
   -c, --changes       implies -u; when the working tree is clean, show the HEAD
@@ -354,7 +354,7 @@ usage: git-smartlog [-u] [-c|-C] [-A] [-b|-B] [-p|-P] [-n N] [-N] [--base REV]
                       stack — or under every public commit in view when HEAD
                       sits on the trunk (pair with -n) — plus the uncommitted
                       node (implies -u; wins over -c)
-  -A, --all-authors   show author + subject for every commit, including public
+  -a, --all-authors   show author + subject for every commit, including public
                       commits by other authors (default: those render compact)
   -b, --branches      show every other local branch as a single node above its
                       fork point with the trunk, tagged (+N) commits since fork
@@ -530,8 +530,8 @@ empty tree so staged and untracked files still show as additions.)
   changes — `-c` under `HEAD` when the tree is clean, `-C` under every commit in
   the current stack (or every public commit in view, when sitting on the trunk).
   Sapling has no equivalent; the default output is unchanged.
-- **`-A`/`--all-authors` is an extension.** By default, public commits by other
-  authors render metadata-only, exactly as Sapling does. `-A` turns that off and
+- **`-a`/`--all-authors` is an extension.** By default, public commits by other
+  authors render metadata-only, exactly as Sapling does. `-a` turns that off and
   shows the author and subject for every commit — handy on shared branches where
   you want to see who did what. Sapling has no equivalent toggle; the default
   output is unchanged.

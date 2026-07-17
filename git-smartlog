@@ -58,7 +58,7 @@
 #   - Long subjects are shown in full; sapling truncates them to the terminal
 #     width with an ellipsis (so they match in a wide terminal, differ in a narrow
 #     one).
-#   - Optional full headers: with -A/--all-authors, every commit shows its author
+#   - Optional full headers: with -a/--all-authors, every commit shows its author
 #     and subject — including public commits by other people, which sapling (and
 #     this script by default) render metadata-only. An extension sapling has no
 #     equivalent for; the default still matches sapling exactly.
@@ -146,13 +146,13 @@
 #     working on a machine without gh.
 #   - Last draft's subject line uses ╭─╯ instead of │ to bend into column 0
 #   - Final line is ~ (truncation indicator)
-#   - Compact public nodes (default; disable with -A/--all-authors): a public
+#   - Compact public nodes (default; disable with -a/--all-authors): a public
 #     commit that is NOT HEAD and was authored by someone other than you renders
 #     metadata-only (no author, no subject line). Mirrors sapling's
 #     `sl_use_short_header`: short header iff `graphnode != @ && phase == public &&
 #     username|email != author|email`. (Source: builtin_static/production.rs.) So
 #     your own public commits and the @ commit still show author + subject in full.
-#     -A/--all-authors turns this off, showing full headers for every commit.
+#     -a/--all-authors turns this off, showing full headers for every commit.
 #
 # Colors (ANSI; suppressed when stdout isn't a TTY or NO_COLOR is set)
 #   - Draft hash: bright-yellow + bold (\e[93;1m) — applies to ALL drafts
@@ -248,7 +248,7 @@ function die {
 }
 
 function smartlog_usage {
-    print -r -- "usage: $PROG [-u] [-c|-C] [-A] [-b|-B] [-p|-P] [-n N] [-N] [--base REV]
+    print -r -- "usage: $PROG [-u] [-c|-C] [-a] [-b|-B] [-p|-P] [-n N] [-N] [--base REV]
 
 Sapling-style smartlog using only git: the current branch's draft stack
 drawn on top of its nearest public (pushed) base.
@@ -260,7 +260,7 @@ drawn on top of its nearest public (pushed) base.
                       stack — or under every public commit in view when HEAD
                       sits on the trunk (pair with -n) — plus the uncommitted
                       node (implies -u; wins over -c)
-  -A, --all-authors   show author + subject for every commit, including public
+  -a, --all-authors   show author + subject for every commit, including public
                       commits by other authors (default: those render compact)
   -b, --branches      show every other local branch as a single node above its
                       fork point with the trunk, tagged (+N) commits since fork
@@ -1063,7 +1063,7 @@ function main {
         {u,-uncommitted}=ARG_UNCOMMITTED \
         {c,-changes}=ARG_CHANGES \
         {C,-changes-all}=ARG_CHANGES_ALL \
-        {A,-all-authors}=ARG_ALL_AUTHORS \
+        {a,-all-authors}=ARG_ALL_AUTHORS \
         {b,-branches}=ARG_BRANCHES \
         {B,-branches-full}=ARG_BRANCHES_FULL \
         {p,-prs}=ARG_PRS \
@@ -1116,7 +1116,7 @@ function main {
 
     # For sapling's compact-public-node rule: a public, non-HEAD commit authored
     # by someone else renders metadata-only. Compared against the configured user.
-    # Skipped under -A/--all-authors, where nothing is ever compacted.
+    # Skipped under -a/--all-authors, where nothing is ever compacted.
     local my_email=
     (( ! all_authors )) && my_email=$(git config user.email 2>/dev/null)
 
@@ -1642,7 +1642,7 @@ function render_plan {
                 text_color=$C_HEAD_TEXT
             fi
             # Compact public node: not HEAD, authored by someone else →
-            # metadata-only (no author, no subject). See header. -A/--all-authors
+            # metadata-only (no author, no subject). See header. -a/--all-authors
             # turns this off (all_authors=1), so every commit gets a full header.
             is_compact=0
             if (( ! all_authors )) && [[ $pp != $head_sha && ${author_emails[idx]} != $my_email ]]; then

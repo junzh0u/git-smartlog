@@ -1071,6 +1071,9 @@ function main {
         {h,-help}=ARG_HELP \
         || { smartlog_usage >&2; exit 2; }
     (( ${#ARG_HELP} )) && { smartlog_usage; exit 0; }
+    # -E leaves anything unrecognized (e.g. --bogus) in the positionals; we take no
+    # positional args, so treat leftovers as a usage error.
+    (( $# )) && { print -ru2 -- "$PROG: unexpected argument: $1"; smartlog_usage >&2; exit 2; }
     local all_authors=0
     (( ${#ARG_ALL_AUTHORS} )) && all_authors=1
     local full_branches=0

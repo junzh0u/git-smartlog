@@ -467,7 +467,8 @@ function filter_refs {
             HEAD) ;;                                        # detached-HEAD self-ref
             */HEAD) ;;                                      # remote default-branch pointer
             refs/heads/*) ;;                                # inactive local branch — hidden
-            refs/tags/*) ;;                                 # tag — smartlog doesn't show tags
+            refs/tags/*|"tag: "*) ;;                        # tag — smartlog doesn't show tags
+                                                            # (%D emits "tag: refs/tags/v1")
             refs/remotes/*)                                 # remote bookmark → origin/master
                 out+=("${r#refs/remotes/}")
                 REF_BRANCHES+=("${${r#refs/remotes/}#*/}") ;;

@@ -27,9 +27,9 @@
 #     you're working a single branch (the common case).
 #   - Other branches, compact (opt-in via -b/--branches): every other local
 #     branch joins the graph as a SINGLE node — its head commit — hanging off
-#     its fork point (its merge-base with HEAD when that lands on a shown draft
-#     of the current stack, else with the trunk), tagged
-#     with a dim "(+N)" count of commits since that fork; the stack interior
+#     its anchor: the nearest shown commit down its chain (a draft of the
+#     current stack, another branch's node, or its trunk fork point), tagged
+#     with a dim "(+N)" count of commits since that anchor; the stack interior
 #     stays hidden (sapling would draw the full stack). A one-commit branch
 #     shows its subject plainly and drops the redundant (+1); a taller one
 #     keeps (+N) and shows its head's subject dimmed — a muted hint of where
@@ -40,12 +40,14 @@
 #     exactly like sapling. A branch merged into the trunk, or pointing at a
 #     commit already on screen, labels that commit instead of adding a node; a
 #     branch whose same-name remote ref sits at the same commit shows only the
-#     remote name (same rule as the active branch). A branch forking from a
-#     draft of the current stack — including one stacked on top of HEAD —
-#     anchors AT that draft: the newest node above the top draft continues the
-#     stack column straight up (sapling's spine rule), any other bends ├─╯ into
-#     the stack right above its fork draft, and (+N) counts only the branch's
-#     own commits past the fork.
+#     remote name (same rule as the active branch). Each node anchors at the
+#     NEAREST shown commit down its chain — a draft of the current stack (a
+#     branch stacked on top of HEAD anchors at HEAD itself), another branch's
+#     node (stacked branches chain their compact nodes), or its trunk fork
+#     point — so (+N) never counts commits another shown node already covers.
+#     Above its anchor, the newest node continues the anchor's column straight
+#     up (sapling's spine rule); any other bends ├─╯ into that column right
+#     above the anchor.
 #   - Other branches, full (opt-in via -B/--branches-full; implies -b and wins
 #     over it): every other local branch renders its COMPLETE first-parent
 #     stack, sapling-style. All heads' chains union into a forest of draft
@@ -968,39 +970,92 @@ function print_commit_stat {
     done
 }
 
+function bnode_epoch {
+    # REPLY = newest commit epoch in the -b node subtree rooted at $1 —
+    # the subtree_epoch analog for compact nodes, memoized in main's
+    # bsub_epoch assoc.
+    local c=$1
+    if [[ -n ${bsub_epoch[$c]:-} ]]; then
+        REPLY=${bsub_epoch[$c]}
+        return
+    fi
+    local best=${epochs[${midx[$c]}]}
+    local k=
+    for k in ${=bkids[$c]:-}; do
+        bnode_epoch $k
+        (( REPLY > best )) && best=$REPLY
+    done
+    bsub_epoch[$c]=$best
+    REPLY=$best
+}
+
 function bnode_order {
-    # reply = the -b branch heads anchored at draft $1 (from dnodes_at),
-    # newest head first — epoch descending, sha descending on ties, the same
-    # order -B gives sibling side subtrees. Epochs are fixed-width digit
-    # strings, so one lexical descending sort orders both keys at once.
-    reply=(${=dnodes_at[$1]:-})
+    # reply = the -b branch heads anchored at commit $1 — a draft or another
+    # head (from bkids) — newest subtree first: subtree epoch descending, sha
+    # descending on ties, the same order -B gives sibling side subtrees.
+    # Epochs are fixed-width digit strings, so one lexical descending sort
+    # orders both keys at once.
+    reply=(${=bkids[$1]:-})
     (( ${#reply} > 1 )) || return 0
     local -a keyed=()
     local kh=
     for kh in $reply; do
-        keyed+=("${epochs[${midx[$kh]}]} $kh")
+        bnode_epoch $kh
+        keyed+=("$REPLY $kh")
     done
     keyed=(${(O)keyed})
     reply=(${keyed[@]##* })
 }
 
-function emit_bnode {
-    # Print one -b compact branch node: its header row over its subject row.
-    # A one-commit branch IS its node: plain subject, no redundant (+1). A
-    # taller stack keeps the (+N) count and shows its head's subject muted
-    # (dim) — a hint of where the stack ends, visibly not the whole story;
-    # -B shows it all. $1 = head sha, $2 = header-row gutter, $3 = subject-row
-    # prefix (the closing join bend, or a │ continuation when the node sits
-    # in-column).
-    local bh=$1 hg=$2 sp=$3
+# A -b compact branch node is a header row over a subject row. A one-commit
+# branch IS its node: plain subject, no redundant (+1). A taller stack keeps
+# the (+N) count and shows its head's subject muted (dim) — a hint of where
+# the stack ends, visibly not the whole story; -B shows it all.
+
+function bnode_header {
+    # Header row for node $1, at gutter $2.
+    local bh=$1 hg=$2
     local -i idx=${midx[$bh]}
     if [[ ${bnode_ahead[$bh]} == 1 ]]; then
         commit_header $idx o "$hg" "$C_DRAFT_HASH" '' 0 ''
-        print -r -- "${sp}  ${subjects[idx]}"
     else
         commit_header $idx o "$hg" "$C_DRAFT_HASH" '' 0 "  ${C_DIM}(+${bnode_ahead[$bh]})${C_RESET}"
+    fi
+}
+
+function bnode_subject {
+    # Subject row for node $1, behind prefix $2 (the closing join bend, or a
+    # │ continuation when the node sits in-column).
+    local bh=$1 sp=$2
+    local -i idx=${midx[$bh]}
+    if [[ ${bnode_ahead[$bh]} == 1 ]]; then
+        print -r -- "${sp}  ${subjects[idx]}"
+    else
         print -r -- "${sp}  ${C_DIM}${subjects[idx]}${C_RESET}"
     fi
+}
+
+function emit_bnode_tree {
+    # Render the -b node tree rooted at head $1: nodes anchored at $1 (bkids)
+    # draw above it — the newest continuing this column straight up, every
+    # other closing a side column with a ├─╯ bend right above $1 — then $1's
+    # own header row. The caller owns $1's subject row (the join bend, or a │
+    # continuation), mirroring emit_subtree's contract. $2 = column prefix.
+    local c=$1 prefix=$2
+    bnode_order $c
+    local -a kids=($reply)
+    local k=
+    if (( ${#kids} )); then
+        emit_bnode_tree ${kids[1]} "$prefix"
+        bnode_subject ${kids[1]} "${prefix}│"
+        print -r -- "${prefix}│"
+        for k in ${kids[2,-1]}; do
+            emit_bnode_tree $k "${prefix}│ "
+            bnode_subject $k "${prefix}├─╯"
+            print -r -- "${prefix}│"
+        done
+    fi
+    bnode_header $c "$prefix"
 }
 
 function emit_subtree {
@@ -1279,14 +1334,15 @@ function main {
 
     # -b/--branches: collect every other local branch. A branch merged into the
     # trunk, or pointing at a commit already in the current stack, just labels
-    # that commit (attach_names); one forking from a shown draft becomes a
-    # single node above that draft (dnodes_at); anything else becomes a single
-    # node above its fork point with the trunk (bnodes_at) — the stack interior
-    # stays hidden. A branch whose same-name remote ref sits at the same commit
-    # keeps its local name hidden, mirroring the ACTIVE_BRANCH rule above (the
-    # remote ref, which %D still carries, already identifies it).
-    local -A attach_names bnodes_at bnode_ahead dnodes_at
-    local -a bnode_heads=() extra_publics=()
+    # that commit (attach_names); anything else becomes a single node above its
+    # anchor — the nearest shown commit down its chain: a draft of the current
+    # stack or another branch's node (bkids), else its fork point with the
+    # trunk (bnodes_at) — the stack interior stays hidden. A branch whose
+    # same-name remote ref sits at the same commit keeps its local name hidden,
+    # mirroring the ACTIVE_BRANCH rule above (the remote ref, which %D still
+    # carries, already identifies it).
+    local -A attach_names bnodes_at bnode_ahead bkids cand_fork
+    local -a bnode_heads=() cand_heads=() extra_publics=()
     # -B forest: every draft commit reachable first-parent from any head, its
     # first parent, its draft children, and the tree roots grouped by the public
     # commit they hang off.
@@ -1301,7 +1357,7 @@ function main {
             [[ -n $rn ]] && remote_tip[$rn]=$rs
         done < <(git for-each-ref --format='%(refname:short) %(objectname)' refs/remotes 2>/dev/null)
 
-        local bname= bhead= fork= dfork= ahead= rk= name_hidden=
+        local bname= bhead= fork= ahead= rk= name_hidden=
         while read -r bname bhead; do
             [[ -z $bname || $bname == "$cur_branch" ]] && continue
             fork=$(git merge-base "$bhead" "$base_ref" 2>/dev/null) || continue
@@ -1331,32 +1387,52 @@ function main {
                 (( name_hidden )) || attach_names[$bhead]+="$bname "
                 continue
             fi
-            # Forks from a draft of the current stack — its merge-base with
-            # HEAD lands on a shown draft (a branch stacked on top of HEAD
-            # anchors at HEAD itself): node above that draft, (+N) counting
-            # only the branch's own commits past the fork. The fork draft is
-            # already on screen, so nothing joins the public window.
-            dfork=$(git merge-base "$bhead" HEAD 2>/dev/null)
-            if [[ -n $dfork ]] && (( ${drafts[(Ie)$dfork]} )); then
-                if [[ -z ${bnode_ahead[$bhead]} ]]; then
-                    ahead=$(git rev-list --count "$bhead" "^$dfork" 2>/dev/null)
-                    dnodes_at[$dfork]+="$bhead "
-                    bnode_ahead[$bhead]=$ahead
-                    bnode_heads+=("$bhead")
-                fi
-                (( name_hidden )) || attach_names[$bhead]+="$bname "
-                continue
-            fi
-            # Two branches on the same head share one node (both names attach).
-            if [[ -z ${bnode_ahead[$bhead]} ]]; then
-                ahead=$(git rev-list --count "$bhead" "^$fork" 2>/dev/null)
-                bnodes_at[$fork]+="$bhead "
-                bnode_ahead[$bhead]=$ahead
-                bnode_heads+=("$bhead")
-                extra_publics+=("$fork")
+            # Candidate for a compact node. Anchoring is resolved after the
+            # scan, once every head is known — a branch can stack on another
+            # branch's node. Two branches on the same head share one node
+            # (both names attach).
+            if [[ -z ${cand_fork[$bhead]} ]]; then
+                cand_fork[$bhead]=$fork
+                cand_heads+=("$bhead")
             fi
             (( name_hidden )) || attach_names[$bhead]+="$bname "
         done < <(git for-each-ref --format='%(refname:short) %(objectname)' refs/heads 2>/dev/null)
+
+        # Anchor each candidate node at the NEAREST shown commit down its
+        # chain: a draft of the current stack (a branch stacked on top of
+        # HEAD anchors at HEAD itself), another candidate's head (stacked
+        # branches chain their compact nodes), or — the fallback — its fork
+        # point with the trunk. Nearest = fewest own commits past the anchor,
+        # so (+N) never counts commits another shown node already covers; a
+        # draft or head anchor is already on screen, so only trunk-anchored
+        # nodes join the public window.
+        local ca= cb= mb= anchor=
+        local -i best=0
+        for ca in $cand_heads; do
+            fork=${cand_fork[$ca]}
+            anchor=$fork
+            best=$(git rev-list --count "$ca" "^$fork" 2>/dev/null)
+            mb=$(git merge-base "$ca" HEAD 2>/dev/null)
+            if [[ -n $mb ]] && (( ${drafts[(Ie)$mb]} )); then
+                ahead=$(git rev-list --count "$ca" "^$mb" 2>/dev/null)
+                (( ahead < best )) && { anchor=$mb; best=$ahead; }
+            fi
+            for cb in $cand_heads; do
+                [[ $cb == $ca ]] && continue
+                mb=$(git merge-base "$ca" "$cb" 2>/dev/null)
+                [[ $mb == $cb ]] || continue   # cb's head is an ancestor of ca's
+                ahead=$(git rev-list --count "$ca" "^$cb" 2>/dev/null)
+                (( ahead < best )) && { anchor=$cb; best=$ahead; }
+            done
+            if [[ $anchor == $fork ]]; then
+                bnodes_at[$fork]+="$ca "
+                extra_publics+=("$fork")
+            else
+                bkids[$anchor]+="$ca "
+            fi
+            bnode_ahead[$ca]=$best
+            bnode_heads+=("$ca")
+        done
     fi
 
     # -B: union every head's first-parent chain into a forest. Shared prefixes
@@ -1518,7 +1594,7 @@ function main {
     # how sapling renders it.
     # -B: mark HEAD's first-parent path (spine preference), find HEAD's tree
     # root, and memoize per-subtree newest epochs for ordering.
-    local -A on_head_path sub_epoch
+    local -A on_head_path sub_epoch bsub_epoch
     local head_root=
     if (( full_branches )) && [[ -n ${in_draft[$head_sha]} ]]; then
         head_root=$head_sha
@@ -1596,7 +1672,7 @@ function render_plan {
 
         case $el in
         (stack)
-            # Branch nodes forked from a draft of the stack (dnodes_at) draw
+            # Branch-node trees anchored at a draft of the stack (bkids) draw
             # above their fork draft. At the TOP draft the newest one continues
             # the stack column straight up — sapling's spine rule — and any
             # other opens a side column closing with a ├─╯ bend right above
@@ -1608,10 +1684,12 @@ function render_plan {
                 dbn=($reply)
             fi
             if (( ${#dbn} )); then
-                emit_bnode ${dbn[1]} "$g" "${g}│"
+                emit_bnode_tree ${dbn[1]} "$g"
+                bnode_subject ${dbn[1]} "${g}│"
                 print -r -- "${g}│"
                 for dbh in ${dbn[2,-1]}; do
-                    emit_bnode $dbh "${g}│ " "${g}├─╯"
+                    emit_bnode_tree $dbh "${g}│ "
+                    bnode_subject $dbh "${g}├─╯"
                     print -r -- "${g}│"
                 done
             fi
@@ -1644,7 +1722,8 @@ function render_plan {
                     # draft, closing right above it.
                     bnode_order ${drafts[di]}
                     for dbh in $reply; do
-                        emit_bnode $dbh "${g}│ " "${g}├─╯"
+                        emit_bnode_tree $dbh "${g}│ "
+                        bnode_subject $dbh "${g}├─╯"
                         print -r -- "${g}│"
                     done
                 fi
@@ -1702,7 +1781,8 @@ function render_plan {
             ;;
         (branch:*)
             bh=${el#branch:}
-            emit_bnode $bh "$g" "$join"
+            emit_bnode_tree $bh "$g"
+            bnode_subject $bh "$join"
             print -r -- "│"
             spine='│'
             ;;

@@ -164,12 +164,14 @@ o  c7283c280b  Wednesday at 09:47  junz  origin/master
 ```
 
 With `-b` / `--branches`, every **other local branch** joins the graph too — as
-a single node hanging off its fork point, tagged with a dim `(+N)` count of
-commits since that fork. A branch forking from the trunk hangs off that public
-commit; one forking from a **draft of the current stack** — including a branch
-stacked on top of `HEAD` — anchors at that draft: the newest node above the top
-draft continues the stack column straight up, any other bends `├─╯` into the
-stack right above its fork draft. A one-commit branch shows its subject plainly
+a single node hanging off its anchor, tagged with a dim `(+N)` count of commits
+since that anchor. The anchor is the nearest shown commit down the branch's
+chain: a **draft of the current stack** (a branch stacked on top of `HEAD`
+anchors at `HEAD` itself), **another branch's node** (stacked branches chain
+their compact nodes), or — the fallback — its fork point with the trunk. Above
+its anchor, the newest node continues the anchor's column straight up, any
+other bends `├─╯` into that column right above the anchor, so `(+N)` never
+counts commits another shown node already covers. A one-commit branch shows its subject plainly
 and drops the redundant `(+1)`; a taller one keeps `(+N)` and shows its head's
 subject dimmed — a muted hint of where the stack ends. Branch names render
 **cyan**, so they stand apart from green remote refs and the yellow active
@@ -463,10 +465,10 @@ empty tree so staged and untracked files still show as additions.)
   function — the same code the [`git-smartstat`](#git-smartstat) command runs.
 - **Public window** — `-n` commits starting at the base.
 - **Other branches** — with `-b`/`--branches`, every other local branch joins the
-  graph as a single node (its head commit) above its fork point — the trunk
-  commit it forked from, or the draft of the current stack when its merge-base
-  with `HEAD` lands on one — tagged with a dim `(+N)` count of commits since
-  that fork; branch names render
+  graph as a single node (its head commit) above its anchor — the nearest shown
+  commit down its chain: a draft of the current stack, another branch's node,
+  or its fork point with the trunk — tagged with a dim `(+N)` count of commits
+  since that anchor; branch names render
   cyan so they stand apart from green remote refs. Trunk fork points are added
   to the public column, with skipped commits eliding to Sapling's dotted `╷`
   spine. A
@@ -517,9 +519,9 @@ empty tree so staged and untracked files still show as additions.)
   elided nodes with a `(+N)` commits-since-fork tag, where Sapling would draw
   each branch's full stack (and has no `(+N)`); branch names are cyan rather than
   Sapling's green `sl.book`, so local branches read differently from remote refs.
-  A branch forking from a draft of the current stack anchors at that draft with
-  only its own commits counted in `(+N)` — the same fork `-B` draws, elided to
-  one node.
+  A branch forking from a draft of the current stack — or from another branch's
+  node — anchors at that commit with only its own commits counted in `(+N)`:
+  the same forks `-B` draws, elided to one node per branch.
 - **`-B`/`--branches-full` is the parity mode.** Full per-branch stacks with the
   same contiguous-chain layout Sapling's renderdag produces (verified against
   it). The remaining differences are ordering heuristics: Sapling sorts by its

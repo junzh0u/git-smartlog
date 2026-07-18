@@ -164,8 +164,12 @@ o  c7283c280b  Wednesday at 09:47  junz  origin/master
 ```
 
 With `-b` / `--branches`, every **other local branch** joins the graph too — as
-a single node hanging off its fork point with the trunk, tagged with a dim `(+N)`
-count of commits since that fork. A one-commit branch shows its subject plainly
+a single node hanging off its fork point, tagged with a dim `(+N)` count of
+commits since that fork. A branch forking from the trunk hangs off that public
+commit; one forking from a **draft of the current stack** — including a branch
+stacked on top of `HEAD` — anchors at that draft: the newest node above the top
+draft continues the stack column straight up, any other bends `├─╯` into the
+stack right above its fork draft. A one-commit branch shows its subject plainly
 and drops the redundant `(+1)`; a taller one keeps `(+N)` and shows its head's
 subject dimmed — a muted hint of where the stack ends. Branch names render
 **cyan**, so they stand apart from green remote refs and the yellow active
@@ -459,10 +463,13 @@ empty tree so staged and untracked files still show as additions.)
   function — the same code the [`git-smartstat`](#git-smartstat) command runs.
 - **Public window** — `-n` commits starting at the base.
 - **Other branches** — with `-b`/`--branches`, every other local branch joins the
-  graph as a single node (its head commit) above its fork point with the trunk,
-  tagged with a dim `(+N)` count of commits since that fork; branch names render
-  cyan so they stand apart from green remote refs. Fork points are added to the
-  public column, with skipped commits eliding to Sapling's dotted `╷` spine. A
+  graph as a single node (its head commit) above its fork point — the trunk
+  commit it forked from, or the draft of the current stack when its merge-base
+  with `HEAD` lands on one — tagged with a dim `(+N)` count of commits since
+  that fork; branch names render
+  cyan so they stand apart from green remote refs. Trunk fork points are added
+  to the public column, with skipped commits eliding to Sapling's dotted `╷`
+  spine. A
   branch merged into the trunk — or pointing at a commit already on screen —
   labels that commit instead of adding a node, and a branch whose same-name
   remote ref sits at the same commit shows only the remote name.
@@ -510,9 +517,9 @@ empty tree so staged and untracked files still show as additions.)
   elided nodes with a `(+N)` commits-since-fork tag, where Sapling would draw
   each branch's full stack (and has no `(+N)`); branch names are cyan rather than
   Sapling's green `sl.book`, so local branches read differently from remote refs.
-  A branch forking from a draft of the current stack is approximated: its node
-  hangs off the shared trunk fork point and `(+N)` includes the shared drafts —
-  `-B` removes that approximation by rendering the real fork.
+  A branch forking from a draft of the current stack anchors at that draft with
+  only its own commits counted in `(+N)` — the same fork `-B` draws, elided to
+  one node.
 - **`-B`/`--branches-full` is the parity mode.** Full per-branch stacks with the
   same contiguous-chain layout Sapling's renderdag produces (verified against
   it). The remaining differences are ordering heuristics: Sapling sorts by its

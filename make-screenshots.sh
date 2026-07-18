@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Regenerate the README screenshots (cover.png, smartstat.png, prs.png) end
-# to end:
+# Regenerate the README screenshots (cover.png, smartstat.png) end to end:
 #
 #   ./make-screenshots.sh [demo-dir]      # default: /tmp/git-smartlog-demo
 #
@@ -37,11 +36,12 @@ fi
 "$REPO/make-demo.sh" "$DEMO" >/dev/null
 echo "demo repo rebuilt: $DEMO"
 
-# Stub `gh` for the -p/--prs shot: the demo repo's remote is a local bare
-# repo, so the real gh can't list PRs for it. git-smartlog only asks gh for a
-# TSV of headRefName/number/state/isDraft/url — serve canned rows covering
-# every tag state (open, draft, merged, closed). Prepended to PATH inside the
-# capture; other shots never invoke gh, so the stub is inert for them.
+# Stub `gh` for the cover shot's -p/--prs tags: the demo repo's remote is a
+# local bare repo, so the real gh can't list PRs for it. git-smartlog only
+# asks gh for a TSV of headRefName/number/state/isDraft/url — serve canned
+# rows covering every tag state (open, draft, merged, closed). Prepended to
+# PATH inside the capture; other shots never invoke gh, so the stub is inert
+# for them.
 mkdir -p "$TMP/bin"
 cat > "$TMP/bin/gh" <<'GH'
 #!/bin/sh
@@ -210,10 +210,9 @@ shoot() {
 
 mkdir -p "$OUT"
 
-shoot cover.png     "git-smartlog -u -n 2 -B -a" "$REPO/git-smartlog" -u -n 2 -B -a
-shoot smartstat.png "git smartstat"              "$REPO/git-smartstat"
+shoot smartstat.png "git smartstat" "$REPO/git-smartstat"
 # Last: -p is sticky (drops a marker in the demo's git dir), so running it
-# earlier would make the following shots tag PRs too.
-shoot prs.png       "git-smartlog -b -p"         "$REPO/git-smartlog" -b -p
+# earlier would make any following smartlog shots tag PRs too.
+shoot cover.png     "git-smartlog -u -n 2 -B -a -p" "$REPO/git-smartlog" -u -n 2 -B -a -p
 
 echo "screenshots written to $OUT"

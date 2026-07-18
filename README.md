@@ -16,7 +16,7 @@ The story behind it is in
 [this post](https://junz.info/writing/git-smartlog/).
 
 <p align="center">
-  <img src="screenshots/cover.png" alt="git-smartlog -u -n 2 -B -a output" width="600">
+  <img src="screenshots/cover.png" alt="git-smartlog -u -n 2 -B -a -p output" width="600">
 </p>
 
 ## Example
@@ -225,11 +225,8 @@ branch name shown on a commit that has a GitHub PR gets a trailing `#N` tag —
 blue for open, dim blue for draft, magenta for merged, red for closed — and,
 on a TTY, an OSC 8 hyperlink to the PR. The flag is sticky per repo: once
 passed, later runs keep tagging without it until `-P` / `--no-prs` turns it
-off. Here it is on the `-b` view of the same repo:
-
-<p align="center">
-  <img src="screenshots/prs.png" alt="git-smartlog -b -p output with PR number tags colored by state" width="700">
-</p>
+off. The cover image up top shows the tags in all four states on the `-B`
+view.
 
 `-B` / `--branches-full` goes all the way: every other local branch renders its
 **complete stack** instead of a single `(+N)` node, matching what Sapling itself
@@ -238,7 +235,8 @@ commit** shows as a real fork, and commits **stacked above `HEAD`** — a branch
 containing `HEAD` while you're checked out mid-stack — appear too, with `@` drawn
 mid-tree. On the same repo as above — `origin/hotfix` and `fix/redirect-loop`
 now show their complete stacks, and with `-a` the public commits by other authors
-get their full headers too. This is the cover image up top:
+get their full headers too. This — plus `-p`'s PR tags — is the cover image up
+top:
 
 ```text
 $ git smartlog -u -n 2 -B -a

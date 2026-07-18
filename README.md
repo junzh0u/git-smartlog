@@ -16,7 +16,7 @@ The story behind it is in
 [this post](https://junz.info/writing/git-smartlog/).
 
 <p align="center">
-  <img src="cover.png" alt="git-smartlog -u -n 2 -B -a output" width="600">
+  <img src="screenshots/cover.png" alt="git-smartlog -u -n 2 -B -a output" width="600">
 </p>
 
 ## Example
@@ -220,6 +220,17 @@ o  80cf810025  Monday at 09:47  prod
 ~
 ```
 
+With `-p` / `--prs` (needs the [GitHub CLI](https://cli.github.com/)), every
+branch name shown on a commit that has a GitHub PR gets a trailing `#N` tag —
+blue for open, dim blue for draft, magenta for merged, red for closed — and,
+on a TTY, an OSC 8 hyperlink to the PR. The flag is sticky per repo: once
+passed, later runs keep tagging without it until `-P` / `--no-prs` turns it
+off. Here it is on the `-b` view of the same repo:
+
+<p align="center">
+  <img src="screenshots/prs.png" alt="git-smartlog -b -p output with PR number tags colored by state" width="700">
+</p>
+
 `-B` / `--branches-full` goes all the way: every other local branch renders its
 **complete stack** instead of a single `(+N)` node, matching what Sapling itself
 draws. All heads' chains union into a forest, so a branch **forking from a draft
@@ -418,7 +429,7 @@ $ git smartstat
 ```
 
 <p align="center">
-  <img src="smartstat.png" alt="git smartstat output, color-coded by change kind" width="560">
+  <img src="screenshots/smartstat.png" alt="git smartstat output, color-coded by change kind" width="560">
 </p>
 
 Wholly-untracked directories collapse to a single entry — the way `git status`

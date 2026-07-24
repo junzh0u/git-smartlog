@@ -95,7 +95,11 @@ within each group, matching `git status`):
 | `U` | unmerged (conflict) | bold red |
 
 A pure executable-bit flip (`chmod`), which `--stat` renders as `| 0`, gets a
-trailing `+x`/`-x` hint. The `@` marker moves to the node — that's where the working
+trailing `+x`/`-x` hint. A **submodule bump** (`S`) expands: its
+`git diff --submodule=log` commit subjects render as dim sub-lines under the stat
+line, newest first, capped at 3 with a `… +N more` tail — `›` for a commit gained,
+`‹` for one lost (a rewind); a bump git can't summarize (commits not present
+locally) adds none. The `@` marker moves to the node — that's where the working
 copy is — and `HEAD` drops to an `o` (keeping its author and subject). This is a
 git-smartlog extension with no Sapling equivalent, so the output no longer mirrors
 `sl` (see [Differences](#differences-from-saplings-sl)):
@@ -112,6 +116,10 @@ $ git smartlog -u -n 2
   │  R logging.go => log.go | 0
   │  T config.json          | 5 +----
   │  S vendor/timeutil      | 2 +-
+  │      › v1.5.0
+  │      › v1.4.0
+  │      › v1.3.0
+  │      … +2 more
   │  U version.go           | 4 ++++
   │
   o  498df929d5  Today at 09:33  junz  feat/retry-backoff*
@@ -195,6 +203,10 @@ $ git smartlog -u -b
   │  R logging.go => log.go | 0
   │  T config.json          | 5 +----
   │  S vendor/timeutil      | 2 +-
+  │      › v1.5.0
+  │      › v1.4.0
+  │      › v1.3.0
+  │      … +2 more
   │  U version.go           | 4 ++++
   │
   o  498df929d5  Today at 09:33  junz  feat/retry-backoff*
@@ -250,6 +262,10 @@ $ git smartlog -u -n 2 -B -a
   │  R logging.go => log.go | 0
   │  T config.json          | 5 +----
   │  S vendor/timeutil      | 2 +-
+  │      › v1.5.0
+  │      › v1.4.0
+  │      › v1.3.0
+  │      … +2 more
   │  U version.go           | 4 ++++
   │
   o  498df929d5  Today at 09:33  junz  feat/retry-backoff*
@@ -423,6 +439,10 @@ $ git smartstat
  R logging.go => log.go | 0
  T config.json          | 5 +----
  S vendor/timeutil      | 2 +-
+     › v1.5.0
+     › v1.4.0
+     › v1.3.0
+     … +2 more
  U version.go           | 4 ++++
 ```
 

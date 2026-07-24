@@ -27,17 +27,18 @@ SUBREMOTE="${DEMO}-timeutil.git"
 
 rm -rf "$DEMO" "$REMOTE" "$SUBREMOTE"
 
-# ── A tiny submodule origin (two commits, so we can show a pointer change) ───────
+# ── A submodule origin (several commits, so a pointer BUMP expands to a commit
+#    list — newest first, capped at 3 with a "… +N more" tail) ─────────────────
 git init -q --bare -b master "$SUBREMOTE"   # HEAD on master so the clone checks out
 subwork=$(mktemp -d)
 git init -q -b master "$subwork"
 (
   cd "$subwork"
   git config user.name "Time Util"; git config user.email "tz@example.com"
-  printf 'package timeutil\n\nconst Version = "1.0.0"\n' > timeutil.go
-  git add .; git -c commit.gpgsign=false commit -q -m "v1.0.0"
-  printf 'package timeutil\n\nconst Version = "1.1.0"\n' > timeutil.go
-  git add .; git -c commit.gpgsign=false commit -q -m "v1.1.0"
+  for v in 1.0.0 1.1.0 1.2.0 1.3.0 1.4.0 1.5.0; do
+    printf 'package timeutil\n\nconst Version = "%s"\n' "$v" > timeutil.go
+    git add .; git -c commit.gpgsign=false commit -q -m "v$v"
+  done
   git push -q "$SUBREMOTE" master
 )
 rm -rf "$subwork"
@@ -139,8 +140,10 @@ set -euo pipefail
 git tag "v$(grep -oE '[0-9.]+' version.go | head -1)"
 EOF
 
-# Submodule (for the S signal); pinned at its v1.1.0 tip for now.
+# Submodule (for the S signal); pinned at its v1.0.0 base for now — the S
+# scenario below bumps it forward, so the pointer change expands to a commit list.
 git -c protocol.file.allow=always submodule add -q "$SUBREMOTE" vendor/timeutil
+( cd vendor/timeutil && git checkout -q "$(git rev-list --max-parents=0 HEAD)" )
 
 git add .
 commit $((now - 5*DAY)) "Alice Ng" "alice@example.com" "Initial project scaffold"
@@ -448,8 +451,9 @@ chmod +x scripts/release.sh
 rm config.json
 ln -s config.defaults.json config.json
 
-# S  submodule pointer change (check the working copy out one commit back)
-( cd vendor/timeutil && git checkout -q HEAD~1 )
+# S  submodule pointer change: bump the working copy forward to the origin tip,
+#    so it expands into the gained commits (newest first, capped at 3 + "… +N more")
+( cd vendor/timeutil && git checkout -q master )
 
 cat <<EOF
 

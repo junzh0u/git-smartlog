@@ -115,6 +115,11 @@
 #     in that order (A ? M D R T S U), alphabetical within each group. The @ marker
 #     moves to the node — that's where the working copy is — and HEAD drops to o
 #     (keeps author/subject).
+#     A submodule bump (marker S) expands: its "git diff --submodule=log" commit
+#     subjects render as dim sub-lines under its stat line, newest first, capped
+#     at 3 with a "… +N more" tail; a commit gained is prefixed "›", one lost (a
+#     rewind) "‹". A bump git can't summarize (commits not present locally) adds
+#     no sub-lines — its bare S line stands alone. Same in every body (-u/-c/-C).
 #   - Commit changes (opt-in via -c/--changes or -C/--changes-all; sapling has no
 #     equivalent): -c implies -u and, when the working tree is CLEAN, draws HEAD's
 #     own per-file stat block (vs its first parent; the empty tree for a root
@@ -181,7 +186,8 @@
 #     D deleted red (\e[31m), R/C renamed blue (\e[34m), T typechange magenta
 #     (\e[35m), S submodule cyan (\e[36m), U unmerged bold red (\e[1;31m); M modified
 #     and the rest default. A +x/-x hint (dim) flags executable-bit flips. git's own
-#     +/- stat graph (green/red) after the '|' is left intact
+#     +/- stat graph (green/red) after the '|' is left intact. A submodule's
+#     expanded commit sub-lines (›/‹ and the "… +N more" tail) are all dim (\e[2m)
 #   - Symbols (@/o) and lines (│ ╭─╯): default
 #
 # Paging
@@ -479,6 +485,38 @@ function filter_refs {
     REPLY="${(j: :)out}"
 }
 
+function submodule_sublines {
+    # reply = capped, dim sub-lines listing a bumped submodule's changed commits
+    # — the `git diff --submodule=log` subjects, newest first — at most 3, then a
+    # "… +N more" line. Git prints "  > subject" for a commit gained and "  < "
+    # for one lost (a rewind); everything else in its output (the "Submodule
+    # path a..b:" header, "(commits not present)" notes) is skipped, so an
+    # unsummarizable bump yields nothing and its bare S line stands alone.
+    # $1 leading spaces (to align under the S line), $2 color_on, $3 submodule
+    # path, $4.. the diff endpoints `git diff` ran against ($parent $commit, or
+    # the working-tree target) — so both -c/-C (commit) and -u (worktree) work.
+    local lead=$1 color_on=$2 sub=$3; shift 3
+    reply=()
+    local -a subjects=()
+    local ln= dir=
+    for ln in ${(f)"$(git diff --submodule=log "$@" -- "$sub" 2>/dev/null)"}; do
+        case $ln in
+            '  > '*) dir='›' ;;
+            '  < '*) dir='‹' ;;
+            *) continue ;;
+        esac
+        subjects+=("${dir} ${ln[5,-1]}")   # drop the 4-char "  > " / "  < " prefix
+    done
+    (( ${#subjects} )) || return
+    local dim= reset=
+    (( color_on )) && { dim=$'\e[2m'; reset=$'\e[0m'; }
+    local -i cap=3 n=${#subjects} i=
+    for ((i = 1; i <= n && i <= cap; i++)); do
+        reply+=("${lead}    ${dim}${subjects[i]}${reset}")
+    done
+    (( n > cap )) && reply+=("${lead}    ${dim}… +$(( n - cap )) more${reset}")
+}
+
 function uncommitted_stat {
     # Compute the uncommitted-changes stat block. $1 = color_on (1 to colorize the
     # marker/name and request colored +/- bars from git; 0 for plain). Sets globals
@@ -771,7 +809,7 @@ function uncommitted_stat {
                 # Render each line, tagging it with a signal rank and a full-path sort
                 # key; then re-emit the body grouped by rank (A ? M D R T S U, then
                 # anything else) so the colors cluster, sorted by path within each group.
-                local -a r_line=() r_rank=() r_name=()
+                local -a r_line=() r_rank=() r_name=() reply=()
                 local sline= before= after= lead= body= trail= nf= mark= col= hint= cp= rank= rendered= tw= sp= skey=
                 for sline in $STAT_BODY; do
                     before=${sline%%\|*}            # " name<pad> " up to the first '|'
@@ -828,6 +866,17 @@ function uncommitted_stat {
                         U)   rank=8 ;;
                         *)   rank=9 ;;
                     esac
+                    # A submodule bump (S) carries its (capped) commit list as
+                    # extra lines on the SAME entry — newline-joined onto the
+                    # rendered S line — so the group sort keeps them attached to
+                    # it; the flatten pass below splits them back into their own
+                    # STAT_BODY lines. STAT_BODY must stay one-line-per-element
+                    # for the -u node consumer, which prefixes each element with
+                    # its own gutter.
+                    if [[ $mark == S ]]; then
+                        submodule_sublines "$lead" $color_on "$skey" $diff_args
+                        (( ${#reply} )) && rendered="${rendered}"$'\n'"${(F)reply}"
+                    fi
                     r_line+=("$rendered"); r_rank+=("$rank"); r_name+=("$skey")
                 done
                 # Order within a rank by filename in C/byte order, matching how git
@@ -847,7 +896,9 @@ function uncommitted_stat {
                     group=("${(o)group[@]}")
                     local entry=
                     for entry in $group; do
-                        marked+=("${entry#*$'\t'}")
+                        # (@f) splits a bundled submodule entry back into its S
+                        # line + sub-lines; a plain entry stays a single line.
+                        marked+=("${(@f)${entry#*$'\t'}}")
                     done
                 done
                 STAT_BODY=("${marked[@]}")

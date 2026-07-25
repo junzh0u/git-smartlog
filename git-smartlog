@@ -880,10 +880,13 @@ function uncommitted_stat {
                     r_line+=("$rendered"); r_rank+=("$rank"); r_name+=("$skey")
                 done
                 # Order within a rank by filename in C/byte order, matching how git
-                # sorts `git status` / `git diff --stat`. LC_COLLATE=C avoids locale
+                # sorts `git status` / `git diff --stat`. LC_ALL=C avoids locale
                 # collation (which would sort e.g. 'g' before 'P' or mishandle
-                # punctuation); it's a function-local, restored on return.
-                local LC_COLLATE=C
+                # punctuation) — and must be LC_ALL, not LC_COLLATE: an LC_ALL
+                # inherited from the environment (DSM's /etc/profile exports
+                # en_US.utf8) outranks LC_COLLATE. It's a function-local,
+                # restored on return.
+                local LC_ALL=C
                 local -a marked=()
                 local g= i=
                 for g in 1 2 3 4 5 6 7 8 9; do

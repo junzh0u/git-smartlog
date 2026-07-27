@@ -14,9 +14,15 @@
 #                          commit between it and the tip elides to a dotted ╷
 #       prod               parked exactly on a public commit — labels it (cyan)
 #       wip/backoff        points at an interior draft of the stack — labels it
+#       refactor/timeouts  forks off a DRAFT of the current stack, so the forest
+#                          has a real fork and the side-column layout is drawn
+#       spike/http3        forks off a draft of refactor/timeouts, nesting that
+#                          layout one level deeper
 #   - uncommitted working-tree changes exercising EVERY signal the wdir node renders:
 #       A staged-new   ? untracked     M modified    D deleted      R renamed
 #       T typechange   S submodule     U unmerged    plus a +x mode flip
+#     ... including a wholly-untracked DIRECTORY, which collapses to one
+#     "dir/ | N files" entry instead of expanding, the way git status lists it.
 #     The submodule is both bumped AND left dirty, so its entry expands into both
 #     groups: its own uncommitted changes, then the commits the bump gained.
 # To produce the conflict (U) the demo is intentionally left mid-merge. Commit dates
@@ -351,6 +357,54 @@ commit $((now - 14*MIN)) "Jun Zhou" "junz@example.com" "Wire backoff into the HT
 # Note: the feature branch is intentionally NOT pushed — git-smartlog shows the
 # active local branch (feat/retry-backoff*) on its own, matching Sapling.
 
+# ── Branches forking off DRAFT commits ─────────────────────────────────────────
+# The rest of the branches hang off public commits, so the -b forest would be
+# nothing but straight chains — and its fork layout (spine child continues the
+# column, every other child opens one a level deeper, closing with a ├─╯ bend)
+# would never be drawn. These two exercise it, nested: refactor/timeouts forks
+# off a draft of the current stack, and spike/http3 off a draft of THAT branch.
+draft_base=$(git rev-parse "feat/retry-backoff~2")   # "Extract retry policy..."
+git switch -q -c refactor/timeouts "$draft_base"
+cat > timeout.go <<'EOF'
+package httpx
+
+import "time"
+
+// DefaultTimeout bounds a single attempt, not the whole retry budget.
+const DefaultTimeout = 5 * time.Second
+EOF
+git add timeout.go
+commit $((now - 20*HOUR)) "Jun Zhou" "junz@example.com" "Bound each attempt with a timeout"
+timeouts_base=$(git rev-parse HEAD)
+cat > timeout.go <<'EOF'
+package httpx
+
+import "time"
+
+// DefaultTimeout bounds a single attempt, not the whole retry budget.
+const DefaultTimeout = 5 * time.Second
+
+// WithTimeout overrides DefaultTimeout for one client.
+func (c *Client) WithTimeout(d time.Duration) *Client {
+	c.base.Timeout = d
+	return c
+}
+EOF
+git add timeout.go
+commit $((now - 19*HOUR)) "Jun Zhou" "junz@example.com" "Let callers override the attempt timeout"
+
+git switch -q -c spike/http3 "$timeouts_base"
+cat > http3.go <<'EOF'
+package httpx
+
+// Spike: does the retry policy even make sense over QUIC?
+const http3Enabled = false
+EOF
+git add http3.go
+commit $((now - 18*HOUR)) "Jun Zhou" "junz@example.com" "Spike HTTP/3 transport"
+
+git switch -q feat/retry-backoff
+
 # ── Mid-merge conflict (U) — created on a CLEAN tree, before the other edits ─────
 # Merging hotfix conflicts on version.go (0.2.0-dev vs 0.1.1) and stops; the repo is
 # left mid-merge so version.go shows up unmerged in the uncommitted node.
@@ -439,6 +493,12 @@ func TestRetryable(t *testing.T) {
 	}
 }
 EOF
+
+# ?  untracked DIRECTORY — collapses to a single "coverage/ | 2 files" entry
+#    rather than expanding to its contents, mirroring git status
+mkdir -p coverage
+printf 'mode: set\n' > coverage/http_client.out
+printf 'mode: set\n' > coverage/retry.out
 
 # D  deleted (tracked file removed)
 git rm -q legacy.go

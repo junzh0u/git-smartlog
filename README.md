@@ -22,20 +22,21 @@ The story behind it is in
 
 ## Example
 
-On a feature branch with a few local commits stacked on `origin/master`:
+On a feature branch with a few local commits stacked on `origin/master`, with a
+clean working tree:
 
 ```text
 $ git smartlog
-  @  498df929d5  Today at 09:33  junz  feat/retry-backoff*
+  @  e6152ce8e3  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  ba482d2f0b  Today at 06:47  junz
+  o  6f1c5c322c  Today at 17:34  junz
   │  Add exponential backoff with jitter
   │
-  o  fa8075adfb  Yesterday at 09:47  junz
+  o  4166003ae8  Yesterday at 20:34  junz
 ╭─╯  Extract retry policy into its own module
 │
-o  c7283c280b  Wednesday at 09:47  junz  origin/master
+o  99b3100c38  Thursday at 20:34  junz  origin/master
 │  Bump dependencies
 ~
 ```
@@ -43,7 +44,8 @@ o  c7283c280b  Wednesday at 09:47  junz  origin/master
 `@` marks `HEAD`; the indented `o` nodes above the bend (`╭─╯`) are your unpushed
 draft commits, newest first. Below the bend sits the public base — the nearest
 pushed commit, here `origin/master` — and `~` marks the truncated history beyond
-it.
+it. This example and the next assume that clean tree: a dirty one always draws
+one more node on top, which is the section after them.
 
 Widen the public window with `-n`. Public commits authored by *someone else*
 render metadata-only (no author, no subject), exactly as Sapling does — see
@@ -53,22 +55,22 @@ public ones:
 
 ```text
 $ git smartlog -n 4
-  @  498df929d5  Today at 09:33  junz  feat/retry-backoff*
+  @  e6152ce8e3  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  ba482d2f0b  Today at 06:47  junz
+  o  6f1c5c322c  Today at 17:34  junz
   │  Add exponential backoff with jitter
   │
-  o  fa8075adfb  Yesterday at 09:47  junz
+  o  4166003ae8  Yesterday at 20:34  junz
 ╭─╯  Extract retry policy into its own module
 │
-o  c7283c280b  Wednesday at 09:47  junz  origin/master
+o  99b3100c38  Thursday at 20:34  junz  origin/master
 │  Bump dependencies
 │
-o  a21fc72b55  Tuesday at 09:47
+o  71068b2065  Wednesday at 20:34
 │
 │
-o  80cf810025  Monday at 09:47
+o  2438d674fc  Tuesday at 20:34
 │
 ~
 ```
@@ -116,8 +118,9 @@ git-smartlog extension with no Sapling equivalent, so the output no longer mirro
 
 ```text
 $ git smartlog -n 2
-  @  Uncommitted changes  10 files, +30 -13
+  @  Uncommitted changes  11 files, +30 -13
   │  A metrics.go           | 7 +++++++
+  │  ? coverage/            | 2 files
   │  ? retry_test.go        | 9 +++++++++
   │  M http_client.go       | 2 +-
   │  M retry.go             | 8 +++++++-
@@ -134,19 +137,19 @@ $ git smartlog -n 2
   │      … +2 more
   │  U version.go           | 4 ++++
   │
-  o  498df929d5  Today at 09:33  junz  feat/retry-backoff*
+  o  e6152ce8e3  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  ba482d2f0b  Today at 06:47  junz
+  o  6f1c5c322c  Today at 17:34  junz
   │  Add exponential backoff with jitter
   │
-  o  fa8075adfb  Yesterday at 09:47  junz
+  o  4166003ae8  Yesterday at 20:34  junz
 ╭─╯  Extract retry policy into its own module
 │
-o  c7283c280b  Wednesday at 09:47  junz  origin/master
+o  99b3100c38  Thursday at 20:34  junz  origin/master
 │  Bump dependencies
 │
-o  a21fc72b55  Tuesday at 09:47
+o  71068b2065  Wednesday at 20:34
 │
 ~
 ```
@@ -161,22 +164,45 @@ total in the header):
 
 ```text
 $ git smartlog -c
-  @  Uncommitted changes  1 file, +9 -0
-  │  ? retry_test.go | 9 +++++++++
+  @  Uncommitted changes  11 files, +30 -13
+  │  A metrics.go           | 7 +++++++
+  │  ? coverage/            | 2 files
+  │  ? retry_test.go        | 9 +++++++++
+  │  M http_client.go       | 2 +-
+  │  M retry.go             | 8 +++++++-
+  │  M scripts/release.sh   | 0 +x
+  │  D legacy.go            | 6 ------
+  │  R logging.go => log.go | 0
+  │  T config.json          | 5 +----
+  │  S vendor/timeutil      | 2 +-
+  │      ? clock.go    | 1 +
+  │      M timeutil.go | 2 ++
+  │      › v1.5.0
+  │      › v1.4.0
+  │      › v1.3.0
+  │      … +2 more
+  │  U version.go           | 4 ++++
   │
-  o  498df929d5  Today at 09:33  junz  feat/retry-backoff*
+  o  e6152ce8e3  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
-  │  M http_client.go | 2 +-
-  │  M retry.go       | 8 +++++++-
-  │  2 files, +9 -1
+  │  M http_client.go | 15 ++++++++++++---
+  │  M version.go     |  2 +-
+  │  2 files, +13 -4
   │
-  o  ba482d2f0b  Today at 06:47  junz
+  o  6f1c5c322c  Today at 17:34  junz
   │  Add exponential backoff with jitter
-  │  A retry.go | 41 ++++++++++++++++++++++
-  │  1 file, +41 -0
+  │  A backoff.go | 13 +++++++++++++
+  │  M retry.go   |  7 +++++++
+  │  2 files, +20 -0
+  │
+  o  4166003ae8  Yesterday at 20:34  junz
+  │  Extract retry policy into its own module
+  │  A retry.go       | 11 +++++++++++
+  │  M http_client.go |  9 +++++----
+  │  2 files, +16 -4
 ╭─╯
 │
-o  c7283c280b  Wednesday at 09:47  junz  origin/master
+o  99b3100c38  Thursday at 20:34  junz  origin/master
 │  Bump dependencies
 ~
 ```
@@ -197,8 +223,9 @@ Alice's public commits their full headers:
 
 ```text
 $ git smartlog -n 2 -b -a
-  @  Uncommitted changes  10 files, +30 -13
+  @  Uncommitted changes  11 files, +30 -13
   │  A metrics.go           | 7 +++++++
+  │  ? coverage/            | 2 files
   │  ? retry_test.go        | 9 +++++++++
   │  M http_client.go       | 2 +-
   │  M retry.go             | 8 +++++++-
@@ -215,66 +242,112 @@ $ git smartlog -n 2 -b -a
   │      … +2 more
   │  U version.go           | 4 ++++
   │
-  o  498df929d5  Today at 09:33  junz  feat/retry-backoff*
+  o  e6152ce8e3  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  ba482d2f0b  Today at 06:47  junz  wip/backoff
+  o  6f1c5c322c  Today at 17:34  junz  wip/backoff
   │  Add exponential backoff with jitter
   │
-  o  fa8075adfb  Yesterday at 09:47  junz
+  │ o  29fd8b8adc  Today at 02:34  junz  spike/http3
+  │ │  Spike HTTP/3 transport
+  │ │
+  │ │ o  6c58835739  Today at 01:34  junz  refactor/timeouts
+  │ ├─╯  Let callers override the attempt timeout
+  │ │
+  │ o  8696775dd4  Today at 00:34  junz
+  ├─╯  Bound each attempt with a timeout
+  │
+  o  4166003ae8  Yesterday at 20:34  junz
 ╭─╯  Extract retry policy into its own module
 │
-│ o  0f9c309236  Thursday at 09:47  junz  origin/hotfix
+│ o  d34d226c1d  Friday at 20:34  junz  origin/hotfix
 ├─╯  Patch release 0.1.1
 │
-o  c7283c280b  Wednesday at 09:47  junz  origin/master
+o  99b3100c38  Thursday at 20:34  junz  origin/master
 │  Bump dependencies
 │
-o  a21fc72b55  Tuesday at 09:47  alice
+o  71068b2065  Wednesday at 20:34  alice
 │  Introduce typed errors
 │
-│ o  f6211c4f36  Yesterday at 08:47  junz  fix/redirect-loop
+│ o  fd5e793e05  Yesterday at 19:34  junz  fix/redirect-loop
 │ │  Abort redirect loops via CheckRedirect
 │ │
-│ o  d8adafbf34  Yesterday at 07:47  junz
+│ o  9d58ac5f6c  Yesterday at 18:34  junz
 ├─╯  Cap redirect chains at 10 hops
 │
-o  80cf810025  Monday at 09:47  alice  prod
+o  2438d674fc  Tuesday at 20:34  alice  prod
 │  Initial project scaffold
 ~
 ```
 
 At each fork the spine child (the one on `HEAD`'s path, else the newest subtree)
 continues the column and every other child opens a column one level deeper,
-newest first, closing with a `├─╯` bend right above the fork:
+newest first, closing with a `├─╯` bend right above the fork. Narrow the public
+window back to the default and the elision shows up too:
 
 ```text
 $ git smartlog -b
-  @  65782fe20b  Thursday at 13:00  junz  stack-z*
-  │  stack-z: z1
+  @  Uncommitted changes  11 files, +30 -13
+  │  A metrics.go           | 7 +++++++
+  │  ? coverage/            | 2 files
+  │  ? retry_test.go        | 9 +++++++++
+  │  M http_client.go       | 2 +-
+  │  M retry.go             | 8 +++++++-
+  │  M scripts/release.sh   | 0 +x
+  │  D legacy.go            | 6 ------
+  │  R logging.go => log.go | 0
+  │  T config.json          | 5 +----
+  │  S vendor/timeutil      | 2 +-
+  │      ? clock.go    | 1 +
+  │      M timeutil.go | 2 ++
+  │      › v1.5.0
+  │      › v1.4.0
+  │      › v1.3.0
+  │      … +2 more
+  │  U version.go           | 4 ++++
   │
-  │ o  d899e778d8  Thursday at 12:00  junz  stack-y
-  ├─╯  stack-y: y2
+  o  e6152ce8e3  14 minutes ago  junz  feat/retry-backoff*
+  │  Wire backoff into the HTTP client
   │
-  o  5b0280f16a  Thursday at 11:00  junz
-  │  stack-y: y1
+  o  6f1c5c322c  Today at 17:34  junz  wip/backoff
+  │  Add exponential backoff with jitter
   │
-  │ o  5bd7e02a2d  Thursday at 10:00  junz  stack-x
-  ├─╯  stack-x: s2
+  │ o  29fd8b8adc  Today at 02:34  junz  spike/http3
+  │ │  Spike HTTP/3 transport
+  │ │
+  │ │ o  6c58835739  Today at 01:34  junz  refactor/timeouts
+  │ ├─╯  Let callers override the attempt timeout
+  │ │
+  │ o  8696775dd4  Today at 00:34  junz
+  ├─╯  Bound each attempt with a timeout
   │
-  o  9f4446f146  Thursday at 09:00  junz
-╭─╯  shared: s1
+  o  4166003ae8  Yesterday at 20:34  junz
+╭─╯  Extract retry policy into its own module
 │
-o  5db4e75a60  Wednesday at 10:00  junz  origin/master
-│  public two
+│ o  d34d226c1d  Friday at 20:34  junz  origin/hotfix
+├─╯  Patch release 0.1.1
+│
+o  99b3100c38  Thursday at 20:34  junz  origin/master
+╷  Bump dependencies
+╷
+╷ o  fd5e793e05  Yesterday at 19:34  junz  fix/redirect-loop
+╷ │  Abort redirect loops via CheckRedirect
+╷ │
+╷ o  9d58ac5f6c  Yesterday at 18:34  junz
+╭─╯  Cap redirect chains at 10 hops
+│
+o  2438d674fc  Tuesday at 20:34  prod
+│
 ~
 ```
 
-Here `stack-y` forks from a draft (`shared: s1`) and `stack-z` forks from a draft
-of `stack-y` — the layouts Sapling's renderdag produces for the same topology,
-verified against it. Labels, `╷` elision, and the remote-name rule all work as in
-`-b`, and a dirty working tree draws its uncommitted node directly above `HEAD`
-wherever it sits in the tree.
+Here `refactor/timeouts` forks off a draft of the current stack and
+`spike/http3` off a draft of *that* branch, so the layout nests one level
+further — what Sapling's renderdag produces for the same topology, verified
+against it. Below `origin/master`, `fix/redirect-loop`'s fork point sits two
+commits down the trunk, so the commit between them elides to the dotted `╷`
+spine. A dirty working tree draws its uncommitted node directly above `HEAD`,
+wherever `HEAD` sits in the tree.
 
 With `-p` / `--prs` (needs the [GitHub CLI](https://cli.github.com/)), every
 branch name shown on a commit that has a GitHub PR gets a trailing `#N` tag —
@@ -399,8 +472,9 @@ Prints nothing when the working tree is clean. The same block git-smartlog draws
 
 ```text
 $ git smartstat
-10 files, +30 -13
+11 files, +30 -13
  A metrics.go           | 7 +++++++
+ ? coverage/            | 2 files
  ? retry_test.go        | 9 +++++++++
  M http_client.go       | 2 +-
  M retry.go             | 8 +++++++-
@@ -422,17 +496,11 @@ $ git smartstat
   <img src="screenshots/smartstat.png" alt="git smartstat output, color-coded by change kind" width="560">
 </p>
 
-Wholly-untracked directories collapse to a single entry — the way `git status`
+A wholly-untracked directory collapses to a single entry — the way `git status`
 lists a new directory — with a file count in place of the `+`/`-` graph,
-right-justified into the same column as git's per-file line counts:
-
-```text
-$ git smartstat
-3 files, +15 -0
- ? .cache/   |  2 files
- ? notes.txt | 14 ++++++++++++++
- M app.py    |  1 +
-```
+right-justified into the same column as git's per-file line counts. That's the
+`coverage/` line above: two files inside, one line out, and it counts as one
+entry in the `11 files` total rather than two.
 
 Paths are shown in full up to your terminal width; like `git diff --stat`, they
 shorten to a leading `...tail` only when the terminal is too narrow to fit them

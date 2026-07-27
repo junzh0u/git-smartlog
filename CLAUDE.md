@@ -26,6 +26,9 @@
   Chrome; macOS-oriented.
 - `screenshots/` — the PNGs the README embeds. Never edit by hand; always
   regenerate.
+- `plans/` — one file per idea worth doing but not done, each naming the
+  functions it touches and the decision still open. Delete a plan when it ships;
+  a decision that got made belongs in the script's comments, not here.
 
 ## After changing output or adding a flag
 

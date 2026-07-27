@@ -572,18 +572,21 @@ empty tree so staged and untracked files still show as additions.)
   to the argument set — with `--not` in play git walks regardless.)
 - **Hashes** — 10 digits, but only the leading ones matter: a second `%h` at
   `--abbrev=4` in the same `git log` pass asks git for the shortest prefix that
-  names exactly one object, and the digits past it render dim. A repo big enough
-  to collide inside 10 digits is shown the wider unique prefix instead of an
-  ambiguous hash, the way git widens its own output.
+  names exactly one object, and the digits past it render dim. jj's idea — its
+  ids show at a glance how much you'd have to type. A repo big enough to collide
+  inside 10 digits is shown the wider unique prefix instead of an ambiguous
+  hash, the way git widens its own output.
 - **`(empty)`** — a commit whose tree equals its first parent's (the empty tree
-  for a root commit) gets its subject prefixed `(empty)`, and no `-c` body.
-  Decided from tree hashes, not diffs: `%T` rides along with the metadata every
+  for a root commit) gets its subject prefixed `(empty)`, and no `-c` body. jj
+  labels these in its log; git doesn't, so an emptied commit looks like any
+  other. Decided from tree hashes, not diffs: `%T` rides along with the metadata every
   row already fetches, and the handful of parents outside the window are fetched
   in one batch rather than a `rev-parse` per row. In the `-f` tail, where there
   is no window to batch over, rows are held one behind — in a first-parent walk
   the next record *is* the previous row's parent.
 - **Uncommitted changes** — whenever `git status` is non-empty, a synthetic
   node on top of `HEAD` carrying compact totals; the `@` marker moves there.
+  Borrowed from jj, where the working copy *is* a commit and needs no synthesis.
   With `-c` it also gets per-file `git diff --stat HEAD` bars. Totals and bars
   alike are computed against a throwaway index overlay that intent-to-adds loose
   untracked files so they're folded in without mutating the repo (a wholly-untracked

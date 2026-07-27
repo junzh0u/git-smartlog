@@ -57,6 +57,13 @@
 #     branch — a pushed feature branch's @{u}, or the local main/master you're
 #     sitting on, can equal HEAD and collapse the whole draft stack. @{u} then a
 #     local main/master are last-resort fallbacks when no remote trunk exists.
+#     That candidate list is the entire heuristic — a trunk named anything else
+#     (develop, release/2.x), or one whose origin/HEAD was never set or went
+#     stale after a rename, is only reachable via --base, which is why the flag
+#     exists. --base redefines "public" for the run as AT OR BELOW that rev:
+#     the rev is taken at your word, so ◆ there means "below the base", not
+#     "pushed" (point it at a never-pushed local branch and that commit still
+#     draws ◆). Only the auto-detected base is guaranteed to be a remote ref.
 #   - Drafts: first-parent commits in `HEAD ^merge_base`, newest first
 #   - Pushed drafts: a draft reachable from any remote-tracking ref draws ◇
 #     instead of o — it's out there, so rewriting it costs a force-push.
@@ -365,7 +372,10 @@ The three view flags below are independent and combine freely.
   -P, --no-prs        turn PR tagging off and forget the remembered -p
                       (wins when both are given)
       --base REV      override the public base (default: nearest remote trunk, e.g.
-                      origin/HEAD, origin/main, origin/master, upstream/main)
+                      origin/HEAD, origin/main, origin/master, upstream/main) —
+                      needed for any other trunk, e.g. develop or release/2.x.
+                      Everything at or below REV then renders public (◆),
+                      whether or not it has been pushed
   -C <path>           run as if started in <path>, like git's own -C; repeats
                       compose, each relative to the last
   -h, --help          show this help and exit

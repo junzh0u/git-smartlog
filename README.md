@@ -368,6 +368,48 @@ commits down the trunk, so the commit between them elides to the dotted `╷`
 spine. A dirty working tree draws its uncommitted node directly above `HEAD`,
 wherever `HEAD` sits in the tree.
 
+`--base REV` moves the bottom of the graph. The base is normally auto-detected —
+the nearest remote trunk — which covers `origin/main`, `origin/master` and a
+correctly-set `origin/HEAD`, and nothing else: a repo whose trunk is `develop`
+or `release/2.x`, or whose `origin/HEAD` is missing or stale after a rename,
+needs to be told. Here it's pointed at `prod`, the branch parked on the oldest
+public commit in the `-b` views above:
+
+<!-- fixture: demo-clean -->
+```text
+$ git smartlog --base prod
+  @  dab33f7027  14 minutes ago  junz  feat/retry-backoff*
+  │  Wire backoff into the HTTP client
+  │
+  o  ed841edfda  Today at 09:31  junz
+  │  Add exponential backoff with jitter
+  │
+  o  50869b41dd  Today at 07:31  junz
+  │  (empty) Require golang.org/x/time
+  │
+  o  556467cccc  Yesterday at 12:31  junz
+  │  Extract retry policy into its own module
+  │
+  ◇  a7bb6e6793  Friday at 12:31  junz  origin/master
+  │  Bump dependencies
+  │
+  ◇  2142d53380  Thursday at 12:31  alice
+╭─╯  Introduce typed errors
+│
+◆  39c359c11d  Wednesday at 12:31
+│
+~
+```
+
+Everything above the new base is a draft now, including `origin/master` — and
+since those two commits *are* on a remote, they draw `◇`. Which is the honest
+reading: relative to `prod` they're unmerged work, and they're published.
+
+Note what `--base` does to `◆`: it means *at or below the base you named*, not
+*pushed*. Point it at a local branch you've never pushed and that commit still
+draws `◆` — you declared it the trunk, so the graph takes your word for it. Only
+the auto-detected base is guaranteed to be a remote ref.
+
 With `-p` / `--prs` (needs the [GitHub CLI](https://cli.github.com/)), every
 branch name shown on a commit that has a GitHub PR gets a trailing `#N` tag —
 blue for open, dim blue for draft, magenta for merged, red for closed — and,
@@ -466,7 +508,10 @@ The three view flags below are independent and combine freely.
   -P, --no-prs        turn PR tagging off and forget the remembered -p
                       (wins when both are given)
       --base REV      override the public base (default: nearest remote trunk, e.g.
-                      origin/HEAD, origin/main, origin/master, upstream/main)
+                      origin/HEAD, origin/main, origin/master, upstream/main) —
+                      needed for any other trunk, e.g. develop or release/2.x.
+                      Everything at or below REV then renders public (◆),
+                      whether or not it has been pushed
   -C <path>           run as if started in <path>, like git's own -C; repeats
                       compose, each relative to the last
   -h, --help          show this help and exit
@@ -559,6 +604,10 @@ empty tree so staged and untracked files still show as additions.)
   `origin/master`, `upstream/main`, `upstream/master`); among those, the one whose
   merge-base with `HEAD` is closest to `HEAD` wins. `@{u}` and a local
   `main`/`master` are last-resort fallbacks when no remote trunk exists.
+  That list is the whole heuristic, so any other trunk needs `--base REV` —
+  which redefines "public" for the run as *at or below that rev*. A base you
+  name is taken at your word, so `◆` there means "below the base", not
+  "pushed"; only the auto-detected base is guaranteed to be a remote ref.
 - **Drafts** — first-parent commits in `HEAD ^base`, newest first.
 - **Symbols** — `@` where the working copy is, then a ramp: `o` unpushed draft,
   `◇` pushed draft, `◆` public. jj's idea: the node carries the phase, so it

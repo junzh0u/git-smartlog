@@ -602,6 +602,7 @@ function uncommitted_stat {
     local color_on=$1
     local reserve=${2:-0}   # columns the caller will prepend to each body line
     local commit=${3:-}
+    local parent=${4:-}     # $3's first parent, when the caller already knows it
     STAT_HAS_CHANGES=0
     STAT_SUMMARY=
     STAT_BODY=()
@@ -632,18 +633,20 @@ function uncommitted_stat {
         (( stat_width < 20 )) && stat_width=20
     fi
 
-    # The two diff endpoints every `git diff` below runs against: "<base>" (the
+    # The two diff endpoints the `git diff` below runs against: "<base>" (the
     # working tree being the implicit right side) in working-tree mode, or
     # "<parent> <commit>" in commit mode.
     local -a diff_args
     local porcelain=
     if [[ -n $commit ]]; then
         # Commit mode: diff against the first parent, or git's empty-tree object
-        # for a root commit. An empty commit contributes nothing — bail early.
-        local parent=
-        parent=$(git rev-parse --verify --quiet "${commit}^" 2>/dev/null) ||
-            parent=4b825dc642cb6eb9a060e54bf8d69288fbee4904
-        git diff --quiet "$parent" "$commit" 2>/dev/null && return
+        # for a root commit. The caller passes the parent when it already has it
+        # ($4) — main and stream_public_tail both carry %P from their `git log`,
+        # and -c stats one commit per row, so looking it up here would be a fork
+        # per row. Emptiness is decided by the diff itself further down.
+        [[ -n $parent ]] ||
+            parent=$(git rev-parse --verify --quiet "${commit}^" 2>/dev/null)
+        [[ -n $parent ]] || parent=4b825dc642cb6eb9a060e54bf8d69288fbee4904
         diff_args=("$parent" "$commit")
     else
         porcelain=$(git status --porcelain 2>/dev/null)
@@ -654,8 +657,8 @@ function uncommitted_stat {
         git rev-parse --verify --quiet HEAD >/dev/null 2>&1 ||
             diff_target=4b825dc642cb6eb9a060e54bf8d69288fbee4904
         diff_args=("$diff_target")
+        STAT_HAS_CHANGES=1
     fi
-    STAT_HAS_CHANGES=1
 
     # Untracked entries via `git ls-files --directory`: a wholly-untracked directory
     # folds to ONE 'dir/' entry (mirroring `git status`), while loose untracked files
@@ -671,7 +674,11 @@ function uncommitted_stat {
         if [[ $ue == */ ]]; then untracked_dirs+=("$ue"); else untracked_files+=("$ue"); fi
     done
 
-    local stat_index=$(git rev-parse --git-path index 2>/dev/null)
+    # The index only matters in working-tree mode, where the untracked overlay
+    # below replaces it; a commit-mode diff reads neither side from it. Skipping
+    # the lookup there drops another fork per -c row.
+    local stat_index=
+    [[ -n $commit ]] || stat_index=$(git rev-parse --git-path index 2>/dev/null)
     local tmp_index=
     {
         # `git diff` only sees tracked paths, so loose untracked files would be
@@ -689,32 +696,61 @@ function uncommitted_stat {
             stat_index=$tmp_index
         fi
 
-        # Compact totals for the summary line. File count and +/- line totals come
-        # from the overlay diff (tracked changes + loose untracked files); each
-        # collapsed untracked directory is then counted as one more "file" (its
-        # contents aren't diffed, so it adds nothing to the +/- line totals — its
-        # body line shows a file count instead). The summary still matches the body:
-        # one counted entry per body line.
-        local shortstat n_files=0 ins=0 del=0
-        shortstat=$(GIT_INDEX_FILE=$stat_index git diff --shortstat $diff_args 2>/dev/null)
-        [[ $shortstat =~ '([0-9]+) files? changed' ]] && n_files=$match[1]
-        [[ $shortstat =~ '([0-9]+) insertion' ]] && ins=$match[1]
-        [[ $shortstat =~ '([0-9]+) deletion' ]] && del=$match[1]
+        # ONE `git diff` for everything this function needs, not four of the same
+        # pair: --raw and --stat together emit the raw records first (each
+        # starting with ':', classified into markers further down), then the
+        # per-file bars, then git's own "N files changed, X insertions(+), Y
+        # deletions(-)" line — which is exactly what a separate --shortstat
+        # would return, and what --quiet would have probed for (no output at all
+        # means no changes). -c stats one commit per row, so each fork saved here
+        # is saved per row.
+        #
+        # Width is forced to stat_width (terminal width, or 80 when piped — see
+        # above) since the $(...) capture hides the real terminal from git. The
+        # capture also strips git's color, so force it back on when color_on; the
+        # raw records and the summary line come out plain either way.
+        local stat_color=--color=never
+        (( color_on )) && stat_color=--color=always
+        local -a diff_out=()
+        if [[ -n $stat_index ]]; then
+            diff_out=("${(@f)$(GIT_INDEX_FILE=$stat_index git diff --raw $stat_color --stat=$stat_width $diff_args 2>/dev/null)}")
+        else
+            diff_out=("${(@f)$(git diff --raw $stat_color --stat=$stat_width $diff_args 2>/dev/null)}")
+        fi
+        local -a raw_lines=()
+        local dl=
+        STAT_BODY=()
+        for dl in $diff_out; do
+            if [[ $dl == :* ]]; then raw_lines+=("$dl"); else STAT_BODY+=("$dl"); fi
+        done
+        # Commit mode defers its emptiness check to here: an empty commit has no
+        # diff at all, and contributes no body. (Working-tree mode already
+        # committed to HAS_CHANGES from porcelain — an untracked directory alone
+        # produces no diff yet still renders a body line.)
+        if [[ -n $commit ]]; then
+            (( ${#diff_out} )) || return
+            STAT_HAS_CHANGES=1
+        fi
+
+        # Compact totals for the summary line, off that trailing line. File count
+        # and +/- line totals cover the overlay diff (tracked changes + loose
+        # untracked files); each collapsed untracked directory is then counted as
+        # one more "file" (its contents aren't diffed, so it adds nothing to the
+        # +/- line totals — its body line shows a file count instead). The summary
+        # still matches the body: one counted entry per body line.
+        local summary= n_files=0 ins=0 del=0
+        if (( ${#STAT_BODY} )); then
+            summary=${STAT_BODY[-1]}
+            STAT_BODY=("${(@)STAT_BODY[1,-2]}")
+        fi
+        [[ $summary =~ '([0-9]+) files? changed' ]] && n_files=$match[1]
+        [[ $summary =~ '([0-9]+) insertion' ]] && ins=$match[1]
+        [[ $summary =~ '([0-9]+) deletion' ]] && del=$match[1]
         (( n_files += ${#untracked_dirs} ))
         local file_word=files
         (( n_files == 1 )) && file_word=file
         STAT_SUMMARY="${n_files} ${file_word}"
         (( ins > 0 || del > 0 )) && STAT_SUMMARY+=", +${ins} -${del}"
-
-        # Per-file body from `git diff --stat`, minus its trailing summary line
-        # (those totals already sit in the summary). Width is forced to stat_width
-        # (terminal width, or 80 when piped — see above) since the $(...) capture
-        # hides the real terminal from git. The capture also strips git's color, so
-        # force it back on when color_on.
-        local stat_color=--color=never
-        (( color_on )) && stat_color=--color=always
-        STAT_BODY=("${(@f)$(GIT_INDEX_FILE=$stat_index git diff $stat_color --stat=$stat_width $diff_args 2>/dev/null)}")
-        (( ${#STAT_BODY} > 0 )) && STAT_BODY=("${(@)STAT_BODY[1,-2]}")
 
         # Marker/color maps per body filename. Declared up here (not inside the
         # classification block) so the synthetic untracked-dir lines appended next
@@ -840,8 +876,7 @@ function uncommitted_stat {
             done
 
             local raw_line
-            while IFS= read -r raw_line; do
-                [[ -z $raw_line ]] && continue
+            for raw_line in $raw_lines; do
                 local -a mf=(${=${raw_line%%$'\t'*}})   # :oldmode newmode oldsha newsha STATUS
                 local p=${raw_line##*$'\t'}             # path (new path for renames)
                 local om=${mf[1]#:} nm=${mf[2]} st=${mf[5]} mark= col= hint=
@@ -871,7 +906,7 @@ function uncommitted_stat {
                 wdir_mark[$p]=$mark
                 wdir_col[$p]=$col
                 wdir_hint[$p]=$hint
-            done < <(GIT_INDEX_FILE=$stat_index git diff --raw $diff_args 2>/dev/null)
+            done
 
             if (( ${#wdir_mark} )); then
                 local creset=$'\e[0m'
@@ -1520,13 +1555,6 @@ function main {
         stat_targets=($drafts)
         (( ${#stat_targets} )) || stat_targets=($publics)
     fi
-    local st_sha=
-    for st_sha in $stat_targets; do
-        uncommitted_stat $color_on 4 $st_sha
-        (( STAT_HAS_CHANGES )) || continue   # empty commit: no body
-        local -a st_body=("${STAT_BODY[@]}" " ${C_DIM}${STAT_SUMMARY}${C_RESET}")
-        commit_stats[$st_sha]=${(F)st_body}
-    done
 
     local -a all_shas
     if (( show_branches )); then
@@ -1558,6 +1586,17 @@ function main {
     local -i mi=0
     for ((mi = 1; mi <= ${#all_shas}; mi++)); do
         midx[${all_shas[mi]}]=$mi
+    done
+
+    # -c bodies. Deliberately after the metadata fetch above: every target is in
+    # it, so its %P gives the first parent uncommitted_stat would otherwise fork
+    # a `rev-parse` per row to learn.
+    local st_sha=
+    for st_sha in $stat_targets; do
+        uncommitted_stat $color_on 4 $st_sha ${parents[${midx[$st_sha]}]%% *}
+        (( STAT_HAS_CHANGES )) || continue   # empty commit: no body
+        local -a st_body=("${STAT_BODY[@]}" " ${C_DIM}${STAT_SUMMARY}${C_RESET}")
+        commit_stats[$st_sha]=${(F)st_body}
     done
 
     local n_drafts=${#drafts}
@@ -1796,7 +1835,7 @@ function stream_public_tail {
         is_compact=0
         (( ! all_authors )) && [[ $ae != $my_email ]] && is_compact=1
         if (( show_changes && ! n_drafts )); then
-            uncommitted_stat $color_on 4 $fsha
+            uncommitted_stat $color_on 4 $fsha ${p%% *}
             if (( STAT_HAS_CHANGES )); then
                 local -a st_body=("${STAT_BODY[@]}" " ${C_DIM}${STAT_SUMMARY}${C_RESET}")
                 commit_stats[$fsha]=${(F)st_body}

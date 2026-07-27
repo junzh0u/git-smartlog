@@ -71,9 +71,27 @@
 #
 # Format per commit
 #   <symbol>  <hash:10>  <reltime>  <author>  [<refs>]
-#   │  <subject>
+#   │  [(empty) ]<subject>
 #   │
 #   - Symbol: @ for HEAD, o otherwise
+#   - Hash: HASH_WIDTH digits cut from %H, split at the shortest prefix that
+#     uniquely names the commit — that prefix keeps the hash color, the rest
+#     goes dim, so a row shows how much of it you'd have to type (jj's id
+#     rendering). The unique length comes from a second %h fetched at
+#     --abbrev=4 in the same `git log` pass, so it costs nothing; see
+#     abbrev_hash, which also widens the display past HASH_WIDTH rather than
+#     print an ambiguous hash in a repo that collides inside it. Color-only:
+#     with the palette off the hash is the flat string it always was.
+#   - (empty): a commit whose tree equals its first parent's (the empty tree for
+#     a root commit) gets its subject prefixed with a dim "(empty)", and no -c
+#     body — it changed nothing, so there is nothing to stat. Borrowed from jj.
+#     Unlike the hash split this is text, not color, so it survives NO_COLOR —
+#     a commit emptied by a rebase is otherwise indistinguishable from one still
+#     carrying work, which is exactly the commit you'd want to drop. Decided
+#     from %T, not a diff: main compares against the parent trees it already
+#     fetched (one batched lookup covers parents outside the window), and the
+#     -f tail holds each row one record behind, since in a first-parent walk the
+#     record just read IS the previous row's parent.
 #   - Uncommitted changes (node always on, body opt-in via -c): when the working
 #     tree is dirty, a synthetic "Uncommitted changes" node is drawn on top of
 #     HEAD. Its header carries compact totals ("2 files, +69 -2") and is all that
@@ -163,6 +181,9 @@
 # Colors (ANSI; suppressed when stdout isn't a TTY or NO_COLOR is set)
 #   - Draft hash: bright-yellow + bold (\e[93;1m) — applies to ALL drafts
 #   - Public hash: yellow (\e[33m)
+#   - Hash digits past the unique prefix: dim (\e[2m), in both colors above
+#   - "(empty)" subject prefix: dim (\e[2m) — but the word itself is text, so
+#     the mark survives a palette-off run; only its dimming is a color
 #   - HEAD's time/author/subject: magenta (\e[35m)
 #   - Refs: remote bookmarks green (\e[32m); the active local branch (name*) yellow
 #     (\e[33m). Mirrors sapling's [color] defaults sl.remote=green, sl.active=yellow
@@ -419,6 +440,16 @@ typeset -g SUBLINE_CAP=10
 # that expand an S entry) is work nobody reads.
 typeset -g STAT_WANT_BODY=1
 
+# How many hash digits a header row shows. Purely a readability width: the
+# digits that actually matter are the shortest UNIQUE prefix, which abbrev_hash
+# measures and commit_header dims the rest of. A repo big enough to collide
+# within this width is shown the wider unique prefix instead, never an ambiguous
+# hash.
+typeset -gi HASH_WIDTH=10
+
+# abbrev_hash()'s second output, alongside REPLY.
+typeset -gi REPLY_UNIQ=0
+
 # filter_refs' second output: the branch names behind the refs it kept — the
 # active branch's name (even when its display is folded into the same-name
 # remote) and each remote bookmark stripped of its remote — i.e. the -p/--prs
@@ -426,6 +457,42 @@ typeset -g STAT_WANT_BODY=1
 typeset -ga REF_BRANCHES
 
 # Helpers set REPLY instead of printing — avoids a $(...) subshell per call.
+
+function abbrev_hash {
+    # $1 the full sha, $2 git's shortest unique abbreviation of it (%h fetched
+    # under --abbrev=4 — git widens past that floor until the prefix names
+    # exactly one object, so it comes free with the metadata that row already
+    # needs). REPLY = the hash to display: HASH_WIDTH digits, or the unique
+    # prefix itself when that is longer, since a repo that collides within
+    # HASH_WIDTH would otherwise be handed an ambiguous hash — git widens its
+    # own output for the same reason. REPLY_UNIQ = how many of those digits are
+    # the unique prefix, so commit_header can dim the rest: borrowed from jj,
+    # whose ids show at a glance how much of the hash you actually need to type.
+    # Not named `full` — that's main's -f/--full flag, and every helper here
+    # reads main's locals by dynamic scoping.
+    local sha=$1 uniq=$2
+    REPLY_UNIQ=${#uniq}
+    if (( REPLY_UNIQ < HASH_WIDTH )); then
+        REPLY=${sha[1,HASH_WIDTH]}
+    else
+        REPLY=$uniq
+    fi
+}
+
+function empty_tag {
+    # REPLY = a dim "(empty) " prefix for commit $1's subject when the commit
+    # changed nothing against its first parent, "" otherwise. Borrowed from jj,
+    # which labels these in its log. They're worth a word: a commit whose
+    # changes landed upstream some other way comes back from a rebase emptied,
+    # and is otherwise indistinguishable from one still carrying work. Unlike
+    # the dimmed hash tail this has to survive NO_COLOR, so it's text, not
+    # color. Reads main's is_empty map via dynamic scoping.
+    if [[ -n ${is_empty[$1]:-} ]]; then
+        REPLY="${C_DIM}(empty)${C_RESET} "
+    else
+        REPLY=
+    fi
+}
 
 function age {
     # Mirrors sapling's `age` templatefilter: walks scales year→second, uses the
@@ -1124,7 +1191,18 @@ function commit_header {
     local author_seg="  ${authors[$i]}"
     (( compact )) && author_seg=
 
-    print -r -- "${g}${symbol}  ${hash_color}${hashes[$i]}${C_RESET}${text_color}  ${time_str}${author_seg}${text_reset}${ref_display}${pr_seg}"
+    # The hash splits at its shortest unique prefix (abbrev_hash): that much
+    # stays in the hash color, the digits past it go dim, so the row shows how
+    # much of it you need to type — jj's id rendering. Purely a color effect;
+    # with the palette off both halves print the same and the hash is the flat
+    # string it always was.
+    local hash_seg="${hash_color}${hashes[$i]}${C_RESET}"
+    local -i hu=${hash_uniq[$i]}
+    if (( hu < ${#hashes[$i]} )); then
+        hash_seg="${hash_color}${hashes[$i][1,hu]}${C_RESET}${C_DIM}${hashes[$i][hu+1,-1]}${C_RESET}"
+    fi
+
+    print -r -- "${g}${symbol}  ${hash_seg}${text_color}  ${time_str}${author_seg}${text_reset}${ref_display}${pr_seg}"
 }
 
 function subtree_epoch {
@@ -1152,7 +1230,8 @@ function draft_subject {
     local c=$1
     local tc=
     [[ $c == $head_sha ]] && (( ! has_changes )) && tc=$C_HEAD_TEXT
-    REPLY="  ${tc}${subjects[${midx[$c]}]}${tc:+$C_RESET}"
+    empty_tag $c
+    REPLY="  ${REPLY}${tc}${subjects[${midx[$c]}]}${tc:+$C_RESET}"
 }
 
 function print_commit_stat {
@@ -1613,15 +1692,23 @@ function main {
     fi
     (( ${#all_shas} == 0 )) && die "Nothing to display"
 
+    # --abbrev=4 asks for the shortest UNIQUE abbreviation rather than a fixed
+    # width (git's floor is 4 and it widens from there until the prefix names
+    # one object); the displayed HASH_WIDTH-digit hash is cut from %H instead,
+    # so both halves of abbrev_hash's split come out of this one pass. %T rides
+    # along for the (empty) check below.
     local commit_data
-    commit_data=$(git log --no-walk=unsorted --abbrev=10 --decorate=full \
-        --pretty=format:'%h%x1f%at%x1f%al%x1f%ae%x1f%D%x1f%P%x1f%s' "${all_shas[@]}")
+    commit_data=$(git log --no-walk=unsorted --abbrev=4 --decorate=full \
+        --pretty=format:'%H%x1f%h%x1f%T%x1f%at%x1f%al%x1f%ae%x1f%D%x1f%P%x1f%s' "${all_shas[@]}")
 
-    local -a hashes epochs authors author_emails refs parents subjects
-    local h e a ae r p s
-    while IFS=$'\x1f' read -r h e a ae r p s; do
-        [[ -z $h ]] && continue
-        hashes+=("$h")
+    local -a hashes hash_uniq trees epochs authors author_emails refs parents subjects
+    local fh h t e a ae r p s
+    while IFS=$'\x1f' read -r fh h t e a ae r p s; do
+        [[ -z $fh ]] && continue
+        abbrev_hash $fh $h
+        hashes+=("$REPLY")
+        hash_uniq+=($REPLY_UNIQ)
+        trees+=("$t")
         epochs+=("$e")
         authors+=("$a")
         author_emails+=("$ae")
@@ -1635,6 +1722,41 @@ function main {
     local -i mi=0
     for ((mi = 1; mi <= ${#all_shas}; mi++)); do
         midx[${all_shas[mi]}]=$mi
+    done
+
+    # (empty) marking: a commit is empty when its tree matches its first
+    # parent's — the same "changed nothing" -c's body test already answers, but
+    # from trees, so it costs no diff. Most parents are shown commits and came
+    # with the pass above; the few outside the window (the bottom public's
+    # parent, and whatever a ╷ elision jumped over) are fetched in one batch
+    # rather than a rev-parse per row.
+    local -A tree_of=() is_empty=()
+    local empty_tree= p1=
+    local -a want_trees=()
+    for ((mi = 1; mi <= ${#all_shas}; mi++)); do
+        tree_of[${all_shas[mi]}]=${trees[mi]}
+    done
+    for ((mi = 1; mi <= ${#all_shas}; mi++)); do
+        p1=${parents[mi]%% *}
+        [[ -n $p1 && -z ${tree_of[$p1]:-} ]] && want_trees+=("$p1")
+    done
+    if (( ${#want_trees} )); then
+        local pt_sha= pt_tree=
+        while IFS=$'\x1f' read -r pt_sha pt_tree; do
+            [[ -n $pt_sha ]] && tree_of[$pt_sha]=$pt_tree
+        done < <(git log --no-walk=unsorted --pretty=tformat:'%H%x1f%T' "${want_trees[@]}")
+    fi
+    for ((mi = 1; mi <= ${#all_shas}; mi++)); do
+        p1=${parents[mi]%% *}
+        if [[ -z $p1 ]]; then
+            # A root commit is empty against the empty tree — the same thing -c
+            # diffs it against. Asked for lazily and once: it costs a fork, and
+            # a root commit is only ever in view at the very bottom of history.
+            [[ -z $empty_tree ]] && empty_tree=$(git hash-object -t tree /dev/null)
+            [[ ${trees[mi]} == $empty_tree ]] && is_empty[${all_shas[mi]}]=1
+        elif [[ ${trees[mi]} == ${tree_of[$p1]:-} ]]; then
+            is_empty[${all_shas[mi]}]=1
+        fi
     done
 
     # -c bodies. Deliberately after the metadata fetch above: every target is in
@@ -1769,7 +1891,8 @@ function render_plan {
                     text_color=$C_HEAD_TEXT
                 fi
                 commit_header $idx $symbol "$g" "$C_DRAFT_HASH" "$text_color" 0
-                subject_body="  ${text_color}${subjects[idx]}${text_color:+$C_RESET}"
+                empty_tag ${drafts[di]}
+                subject_body="  ${REPLY}${text_color}${subjects[idx]}${text_color:+$C_RESET}"
                 if (( di == n_drafts )); then
                     # A stat body must stay in ITS commit's column: printed
                     # after the ╭─╯ bend it would sit beside the public commit
@@ -1832,7 +1955,8 @@ function render_plan {
                 is_compact=1
             fi
             commit_header $idx $symbol '' "$C_PUBLIC_HASH" "$text_color" $is_compact
-            subject_body="  ${text_color}${subjects[idx]}${text_color:+$C_RESET}"
+            empty_tag $pp
+            subject_body="  ${REPLY}${text_color}${subjects[idx]}${text_color:+$C_RESET}"
             (( is_compact )) && subject_body=
             if (( pl_i == n_plan )); then
                 # The final row below this ("~" or the -f tail's spine)
@@ -1867,40 +1991,69 @@ function stream_public_tail {
     # to main's arrays via dynamic scoping. Ends with "~" only at the root
     # commit; tformat (not format) terminates the last record with a newline
     # so the root commit survives the read loop.
+    #
+    # Rows are held one behind: in a first-parent walk the record just read IS
+    # the held row's parent, so its %T is what says whether that row was empty
+    # — the tail's answer to the tree lookup main does for the planned window,
+    # at no fork per row. One row of buffering doesn't cost the laziness (git
+    # still can't outrun the pager). The whole loop, flush included, is one
+    # pipeline stage: zsh runs that in a subshell, so a flush after `done`
+    # would be looking at a copy of `pend` that never got written.
     local from=$1
     print -r -- "│"
-    local fsha= h= e= a= ae= r= p= s= subject_body=
-    local -i idx=0 is_compact=0
-    git log --first-parent --abbrev=10 --decorate=full \
-        --pretty=tformat:'%H%x1f%h%x1f%at%x1f%al%x1f%ae%x1f%D%x1f%P%x1f%s' \
+    local fsha= h= t= e= a= ae= r= p= s=
+    local -a pend=()
+    git log --first-parent --abbrev=4 --decorate=full \
+        --pretty=tformat:'%H%x1f%h%x1f%T%x1f%at%x1f%al%x1f%ae%x1f%D%x1f%P%x1f%s' \
         "${from}^" 2>/dev/null |
-    while IFS=$'\x1f' read -r fsha h e a ae r p s; do
-        [[ -z $fsha ]] && continue
-        all_shas+=("$fsha"); hashes+=("$h"); epochs+=("$e"); authors+=("$a")
-        author_emails+=("$ae"); refs+=("$r"); parents+=("$p"); subjects+=("$s")
-        idx=${#hashes}
-        # Same compact-public rule as the plan loop; a tail commit is never
-        # HEAD (HEAD sits at or above the merge-base, always in the window).
-        is_compact=0
-        (( ! full )) && [[ $ae != $my_email ]] && is_compact=1
-        if (( show_changes && ! n_drafts )); then
-            uncommitted_stat $color_on 4 $fsha ${p%% *}
-            if (( STAT_HAS_CHANGES )); then
-                local -a st_body=("${STAT_BODY[@]}" " ${C_DIM}${STAT_SUMMARY}${C_RESET}")
-                commit_stats[$fsha]=${(F)st_body}
-            fi
+    {
+        while IFS=$'\x1f' read -r fsha h t e a ae r p s; do
+            [[ -z $fsha ]] && continue
+            (( ${#pend} )) && emit_tail_row "$t" "${pend[@]}"
+            pend=("$fsha" "$h" "$t" "$e" "$a" "$ae" "$r" "$p" "$s")
+        done
+        # git log ran out, so the held row is the root commit (or a shallow
+        # clone's graft, which has a parent we can't see and so never reads as
+        # empty). Its parent tree is the empty tree.
+        (( ${#pend} )) && emit_tail_row "$(git hash-object -t tree /dev/null)" "${pend[@]}"
+    }
+}
+
+function emit_tail_row {
+    # Print one row of the -f streamed tail: $1 the first parent's tree (what
+    # decides the (empty) mark), then the held record — sha, unique abbrev,
+    # tree, epoch, author, email, refs, parents, subject. Appends the metadata
+    # to main's arrays (dynamic scoping, like the rest of the tail) so
+    # commit_header reads it back by index exactly like a planned row.
+    local ptree=$1 fsha=$2 h=$3 t=$4 e=$5 a=$6 ae=$7 r=$8 p=$9 s=${10}
+    abbrev_hash $fsha $h
+    all_shas+=("$fsha"); hashes+=("$REPLY"); hash_uniq+=($REPLY_UNIQ)
+    epochs+=("$e"); authors+=("$a")
+    author_emails+=("$ae"); refs+=("$r"); parents+=("$p"); subjects+=("$s")
+    [[ $t == $ptree ]] && is_empty[$fsha]=1
+    local -i idx=${#hashes}
+    # Same compact-public rule as the plan loop; a tail commit is never
+    # HEAD (HEAD sits at or above the merge-base, always in the window).
+    local -i is_compact=0
+    (( ! full )) && [[ $ae != $my_email ]] && is_compact=1
+    if (( show_changes && ! n_drafts )); then
+        uncommitted_stat $color_on 4 $fsha ${p%% *}
+        if (( STAT_HAS_CHANGES )); then
+            local -a st_body=("${STAT_BODY[@]}" " ${C_DIM}${STAT_SUMMARY}${C_RESET}")
+            commit_stats[$fsha]=${(F)st_body}
         fi
-        commit_header $idx o '' "$C_PUBLIC_HASH" '' $is_compact
-        subject_body="  ${subjects[idx]}"
-        (( is_compact )) && subject_body=
-        print -r -- "│${subject_body}"
-        print_commit_stat $fsha "│"
-        if [[ -n $p ]]; then
-            print -r -- "│"
-        else
-            print -r -- "~"   # root commit: history exhausted
-        fi
-    done
+    fi
+    commit_header $idx o '' "$C_PUBLIC_HASH" '' $is_compact
+    empty_tag $fsha
+    local subject_body="  ${REPLY}${subjects[idx]}"
+    (( is_compact )) && subject_body=
+    print -r -- "│${subject_body}"
+    print_commit_stat $fsha "│"
+    if [[ -n $p ]]; then
+        print -r -- "│"
+    else
+        print -r -- "~"   # root commit: history exhausted
+    fi
 }
 
 function smartstat_main {

@@ -6,7 +6,9 @@
 #
 # It lays out a small HTTP-client project with:
 #   - a public base on origin/master (two compact commits by someone else, one by you)
-#   - a 3-commit draft stack on a feature branch
+#   - a 4-commit draft stack on a feature branch, one of them EMPTY — the shape a
+#     rebase leaves behind when the change landed upstream some other way, which
+#     the graph labels "(empty)" and -c gives no body at all
 #   - other local branches exercising EVERY signal the -b view renders:
 #       hotfix             sibling node at the trunk tip, pushed — so the green
 #                          origin/hotfix shows and the local name stays hidden
@@ -276,6 +278,18 @@ EOF
 git add retry.go http_client.go
 commit $((now - 1*DAY)) "Jun Zhou" "junz@example.com" "Extract retry policy into its own module"
 
+# An EMPTY draft, mid-stack: the public tip's "Bump dependencies" already added
+# the very require line this commit did, so a rebase onto master left it with
+# nothing to apply. Committed with --allow-empty since that's the only way to
+# manufacture the state; what matters is the tree matching its parent's. The
+# graph prefixes its subject with "(empty)", and -c gives it no body at all —
+# a commit that changed nothing has nothing to stat.
+GIT_AUTHOR_NAME="Jun Zhou" GIT_AUTHOR_EMAIL="junz@example.com" \
+GIT_AUTHOR_DATE="@$((now - 5*HOUR)) +0000" \
+GIT_COMMITTER_NAME="Jun Zhou" GIT_COMMITTER_EMAIL="junz@example.com" \
+GIT_COMMITTER_DATE="@$((now - 5*HOUR)) +0000" \
+  git commit -q --allow-empty -m "Require golang.org/x/time"
+
 cat > backoff.go <<'EOF'
 package httpx
 
@@ -365,7 +379,7 @@ commit $((now - 14*MIN)) "Jun Zhou" "junz@example.com" "Wire backoff into the HT
 # column, every other child opens one a level deeper, closing with a ├─╯ bend)
 # would never be drawn. These two exercise it, nested: refactor/timeouts forks
 # off a draft of the current stack, and spike/http3 off a draft of THAT branch.
-draft_base=$(git rev-parse "feat/retry-backoff~2")   # "Extract retry policy..."
+draft_base=$(git rev-parse "feat/retry-backoff~3")   # "Extract retry policy..."
 git switch -q -c refactor/timeouts "$draft_base"
 cat > timeout.go <<'EOF'
 package httpx

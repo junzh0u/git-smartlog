@@ -14,10 +14,11 @@ abbreviating anything — combine freely. See below.
 
 It began as a mimic of Sapling's `sl`, and still owes it the graph layout, the
 relative-time format and the color defaults. It has since grown enough of its
-own that it no longer tracks `sl`'s output, and isn't trying to. The
-uncommitted-changes node is borrowed from
-[Jujutsu](https://github.com/jj-vcs/jj), which treats the working copy as a
-commit in its own right.
+own that it no longer tracks `sl`'s output, and isn't trying to. Three things
+come from [Jujutsu](https://github.com/jj-vcs/jj) instead: the
+uncommitted-changes node, since jj treats the working copy as a commit in its
+own right; the `(empty)` label on a commit that changed nothing; and hashes
+that dim everything past the prefix which uniquely identifies them.
 
 The story behind it is in
 [this post](https://junz.info/writing/git-smartlog/).
@@ -34,16 +35,19 @@ clean working tree:
 <!-- fixture: demo-clean -->
 ```text
 $ git smartlog
-  @  e6152ce8e3  14 minutes ago  junz  feat/retry-backoff*
+  @  069cabb18f  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  6f1c5c322c  Today at 17:34  junz
+  o  b9b916ac16  Today at 19:55  junz
   │  Add exponential backoff with jitter
   │
-  o  4166003ae8  Yesterday at 20:34  junz
+  o  1ad3c2a1ab  Today at 17:55  junz
+  │  (empty) Require golang.org/x/time
+  │
+  o  9b9e5b6d72  Yesterday at 22:55  junz
 ╭─╯  Extract retry policy into its own module
 │
-o  99b3100c38  Thursday at 20:34  junz  origin/master
+o  39d1dfd162  Thursday at 22:55  junz  origin/master
 │  Bump dependencies
 ~
 ```
@@ -53,6 +57,18 @@ draft commits, newest first. Below the bend sits the public base — the nearest
 pushed commit, here `origin/master` — and `~` marks the truncated history beyond
 it. This example and the next assume that clean tree: a dirty one always draws
 one more node on top, which is the section after them.
+
+A subject prefixed **`(empty)`** is a commit that changed nothing against its
+parent — here, a rebase onto `origin/master` found the dependency bump already
+applied and left the commit with nothing in it. Without the label an emptied
+commit is indistinguishable from one still carrying work; with it, the commit
+you want to drop says so. (`-c` gives such a commit no stat body at all, below.)
+
+In a terminal the hash also splits: the shortest prefix that uniquely names the
+commit in this repo keeps the hash color and the digits past it go dim, so a row
+shows how much of a hash you actually have to type. It's a color effect only —
+the text is the same 10 digits either way, which is why these captures don't
+show it. The cover image up top does.
 
 The public column stops at that base by design — one row plus `~`. `-f` /
 `--full` is the tool's one *don't abbreviate* switch, and it lifts three
@@ -65,22 +81,25 @@ subject back. The third is the submodule sub-line cap, further down.
 <!-- fixture: demo-clean -->
 ```text
 $ git smartlog -f
-  @  2cefe2d943  14 minutes ago  junz  feat/retry-backoff*
+  @  069cabb18f  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  bc7afdc65b  Today at 18:51  junz
+  o  b9b916ac16  Today at 19:55  junz
   │  Add exponential backoff with jitter
   │
-  o  88395fc0f3  Yesterday at 21:51  junz
+  o  1ad3c2a1ab  Today at 17:55  junz
+  │  (empty) Require golang.org/x/time
+  │
+  o  9b9e5b6d72  Yesterday at 22:55  junz
 ╭─╯  Extract retry policy into its own module
 │
-o  c08935dddd  Thursday at 21:51  junz  origin/master
+o  39d1dfd162  Thursday at 22:55  junz  origin/master
 │  Bump dependencies
 │
-o  4347b66078  Wednesday at 21:51  alice
+o  02f97156dd  Wednesday at 22:55  alice
 │  Introduce typed errors
 │
-o  0bff574d95  Tuesday at 21:51  alice
+o  f00cdf1bc1  Tuesday at 22:55  alice
 │  Initial project scaffold
 ~
 ```
@@ -103,16 +122,19 @@ copy is — and `HEAD` drops to an `o` (keeping its author and subject):
 $ git smartlog
   @  Uncommitted changes  11 files, +30 -13
   │
-  o  2cefe2d943  14 minutes ago  junz  feat/retry-backoff*
+  o  069cabb18f  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  bc7afdc65b  Today at 18:51  junz
+  o  b9b916ac16  Today at 19:55  junz
   │  Add exponential backoff with jitter
   │
-  o  88395fc0f3  Yesterday at 21:51  junz
+  o  1ad3c2a1ab  Today at 17:55  junz
+  │  (empty) Require golang.org/x/time
+  │
+  o  9b9e5b6d72  Yesterday at 22:55  junz
 ╭─╯  Extract retry policy into its own module
 │
-o  c08935dddd  Thursday at 21:51  junz  origin/master
+o  39d1dfd162  Thursday at 22:55  junz  origin/master
 │  Bump dependencies
 ~
 ```
@@ -123,7 +145,8 @@ the uncommitted node** — the same flag, on the same footing; sitting directly 
 the trunk (no stack), it covers **every public commit in view** instead — pair it
 with `-f` to walk back through it. Commit bodies close with a dim
 `N files, +X -Y` total line; the uncommitted node keeps its total in the header
-it already had.
+it already had. An `(empty)` commit gets no body — there is nothing to stat, and
+its subject already says so.
 
 Every body is `git diff --stat` bars with each filename prefixed by a one-letter
 change marker; both marker and name are color-coded by kind, on top of git's
@@ -190,26 +213,29 @@ $ git smartlog -c
   │      … +1 more
   │  U version.go           | 4 ++++
   │
-  o  6e3da2593c  14 minutes ago  junz  feat/retry-backoff*
+  o  069cabb18f  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │  M http_client.go | 15 ++++++++++++---
   │  M version.go     |  2 +-
   │  2 files, +13 -4
   │
-  o  0c83b006b2  Today at 18:08  junz
+  o  b9b916ac16  Today at 19:55  junz
   │  Add exponential backoff with jitter
   │  A backoff.go | 13 +++++++++++++
   │  M retry.go   |  7 +++++++
   │  2 files, +20 -0
   │
-  o  090efdec03  Yesterday at 21:08  junz
+  o  1ad3c2a1ab  Today at 17:55  junz
+  │  (empty) Require golang.org/x/time
+  │
+  o  9b9e5b6d72  Yesterday at 22:55  junz
   │  Extract retry policy into its own module
   │  A retry.go       | 11 +++++++++++
   │  M http_client.go |  9 +++++----
   │  2 files, +16 -4
 ╭─╯
 │
-o  0fa721bda0  Thursday at 21:08  junz  origin/master
+o  39d1dfd162  Thursday at 22:55  junz  origin/master
 │  Bump dependencies
 ~
 ```
@@ -234,37 +260,40 @@ base:
 $ git smartlog -b -f
   @  Uncommitted changes  11 files, +30 -13
   │
-  o  2cefe2d943  14 minutes ago  junz  feat/retry-backoff*
+  o  069cabb18f  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  bc7afdc65b  Today at 18:51  junz  wip/backoff
+  o  b9b916ac16  Today at 19:55  junz  wip/backoff
   │  Add exponential backoff with jitter
   │
-  │ o  cd77ef158f  Today at 03:51  junz  spike/http3
+  o  1ad3c2a1ab  Today at 17:55  junz
+  │  (empty) Require golang.org/x/time
+  │
+  │ o  c2c3ed0fed  Today at 04:55  junz  spike/http3
   │ │  Spike HTTP/3 transport
   │ │
-  │ │ o  2f8acd8758  Today at 02:51  junz  refactor/timeouts
+  │ │ o  3b88fb56a6  Today at 03:55  junz  refactor/timeouts
   │ ├─╯  Let callers override the attempt timeout
   │ │
-  │ o  3688a2273e  Today at 01:51  junz
+  │ o  f07997a32d  Today at 02:55  junz
   ├─╯  Bound each attempt with a timeout
   │
-  o  88395fc0f3  Yesterday at 21:51  junz
+  o  9b9e5b6d72  Yesterday at 22:55  junz
 ╭─╯  Extract retry policy into its own module
 │
-│ o  b99f8bce09  Friday at 21:51  junz  origin/hotfix
+│ o  a991b4c622  Friday at 22:55  junz  origin/hotfix
 ├─╯  Patch release 0.1.1
 │
-o  c08935dddd  Thursday at 21:51  junz  origin/master
+o  39d1dfd162  Thursday at 22:55  junz  origin/master
 ╷  Bump dependencies
 ╷
-╷ o  6c827ca788  Yesterday at 20:51  junz  fix/redirect-loop
+╷ o  d1037c0e75  Yesterday at 21:55  junz  fix/redirect-loop
 ╷ │  Abort redirect loops via CheckRedirect
 ╷ │
-╷ o  6b48bb0092  Yesterday at 19:51  junz
+╷ o  60a4d85847  Yesterday at 20:55  junz
 ╭─╯  Cap redirect chains at 10 hops
 │
-o  0bff574d95  Tuesday at 21:51  alice  prod
+o  f00cdf1bc1  Tuesday at 22:55  alice  prod
 │  Initial project scaffold
 ~
 ```
@@ -279,37 +308,40 @@ window back to the default and the elision shows up too:
 $ git smartlog -b
   @  Uncommitted changes  11 files, +30 -13
   │
-  o  8685566e7a  14 minutes ago  junz  feat/retry-backoff*
+  o  069cabb18f  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  332dae7792  Today at 18:29  junz  wip/backoff
+  o  b9b916ac16  Today at 19:55  junz  wip/backoff
   │  Add exponential backoff with jitter
   │
-  │ o  2cba6cab4d  Today at 03:29  junz  spike/http3
+  o  1ad3c2a1ab  Today at 17:55  junz
+  │  (empty) Require golang.org/x/time
+  │
+  │ o  c2c3ed0fed  Today at 04:55  junz  spike/http3
   │ │  Spike HTTP/3 transport
   │ │
-  │ │ o  3e17ebb235  Today at 02:29  junz  refactor/timeouts
+  │ │ o  3b88fb56a6  Today at 03:55  junz  refactor/timeouts
   │ ├─╯  Let callers override the attempt timeout
   │ │
-  │ o  fcb3c6c361  Today at 01:29  junz
+  │ o  f07997a32d  Today at 02:55  junz
   ├─╯  Bound each attempt with a timeout
   │
-  o  424771e9eb  Yesterday at 21:29  junz
+  o  9b9e5b6d72  Yesterday at 22:55  junz
 ╭─╯  Extract retry policy into its own module
 │
-│ o  d0511f97bf  Friday at 21:29  junz  origin/hotfix
+│ o  a991b4c622  Friday at 22:55  junz  origin/hotfix
 ├─╯  Patch release 0.1.1
 │
-o  db25b229b0  Thursday at 21:29  junz  origin/master
+o  39d1dfd162  Thursday at 22:55  junz  origin/master
 ╷  Bump dependencies
 ╷
-╷ o  254752406c  Yesterday at 20:29  junz  fix/redirect-loop
+╷ o  d1037c0e75  Yesterday at 21:55  junz  fix/redirect-loop
 ╷ │  Abort redirect loops via CheckRedirect
 ╷ │
-╷ o  249db17a80  Yesterday at 19:29  junz
+╷ o  60a4d85847  Yesterday at 20:55  junz
 ╭─╯  Cap redirect chains at 10 hops
 │
-o  70357b18fd  Tuesday at 21:29  prod
+o  f00cdf1bc1  Tuesday at 22:55  prod
 │
 ~
 ```
@@ -331,8 +363,10 @@ off. The cover image up top shows the tags in all four states on the `-b`
 view.
 
 In a real terminal the output is colorized — draft hashes in bold yellow,
-`HEAD`'s line in magenta, remote refs in green, `-b` branch names in cyan. ANSI is suppressed when stdout
-isn't a TTY (as in these captures) or when `NO_COLOR` is set.
+`HEAD`'s line in magenta, remote refs in green, `-b` branch names in cyan, and
+every hash dim past its unique prefix. ANSI is suppressed when stdout
+isn't a TTY (as in these captures) or when `NO_COLOR` is set — which is why
+`(empty)` is a word and the hash split is not.
 
 ## Requirements
 
@@ -505,6 +539,18 @@ empty tree so staged and untracked files still show as additions.)
   merge-base with `HEAD` is closest to `HEAD` wins. `@{u}` and a local
   `main`/`master` are last-resort fallbacks when no remote trunk exists.
 - **Drafts** — first-parent commits in `HEAD ^base`, newest first.
+- **Hashes** — 10 digits, but only the leading ones matter: a second `%h` at
+  `--abbrev=4` in the same `git log` pass asks git for the shortest prefix that
+  names exactly one object, and the digits past it render dim. A repo big enough
+  to collide inside 10 digits is shown the wider unique prefix instead of an
+  ambiguous hash, the way git widens its own output.
+- **`(empty)`** — a commit whose tree equals its first parent's (the empty tree
+  for a root commit) gets its subject prefixed `(empty)`, and no `-c` body.
+  Decided from tree hashes, not diffs: `%T` rides along with the metadata every
+  row already fetches, and the handful of parents outside the window are fetched
+  in one batch rather than a `rev-parse` per row. In the `-f` tail, where there
+  is no window to batch over, rows are held one behind — in a first-parent walk
+  the next record *is* the previous row's parent.
 - **Uncommitted changes** — whenever `git status` is non-empty, a synthetic
   node on top of `HEAD` carrying compact totals; the `@` marker moves there.
   With `-c` it also gets per-file `git diff --stat HEAD` bars. Totals and bars

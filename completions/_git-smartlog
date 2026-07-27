@@ -25,11 +25,9 @@ _git-smartlog() {
     _arguments -s -S \
         '(-c --changes)'{-c,--changes}'[per-file changes under every commit in view, and under the uncommitted node]' \
         '(-b --branches)'{-b,--branches}'[other local branches as their full stacks, sapling-style]' \
-        '(-a --all-authors)'{-a,--all-authors}'[full headers for every commit, incl. other authors'\'' public ones]' \
+        '(-f --full)'{-f,--full}'[abbreviate nothing: full headers, streaming history, uncapped submodule sub-lines]' \
         '(-p --prs -P --no-prs)'{-p,--prs}'[tag shown branch names with their GitHub PR number (needs gh); sticky per repo]' \
         '(-P --no-prs -p --prs)'{-P,--no-prs}'[turn PR tagging off and forget the remembered -p]' \
-        '(-n --limit)'{-n+,--limit=}'[public commits to show, incl. merge-base (default 1)]:count' \
-        '(-N --no-limit)'{-N,--no-limit}'[do not truncate: stream older history past -n, uncap submodule sub-lines]' \
         '--base=[override the public base (default: nearest remote trunk)]:revision:_git-smartlog_base' \
         '*-C+[run as if started in <path>, like git'\''s own -C]:directory:_directories' \
         '(- *)'{-h,--help}'[show help and exit]'

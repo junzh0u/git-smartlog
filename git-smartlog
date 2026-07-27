@@ -52,10 +52,10 @@
 #     working-copy changes differently, so any dirty-tree output diverges from
 #     `\sl` by that node — the idea is borrowed from jj, which treats the
 #     working copy as a commit in its own right.
-#   - Optional full headers: with -a/--all-authors, every commit shows its
-#     author and subject — including public commits by other people, which
-#     sapling (and this script by default) render metadata-only. An extension
-#     sapling has no equivalent for; the default still matches sapling exactly.
+#   - Optional full headers: with -f/--full, every commit shows its author and
+#     subject — including public commits by other people, which sapling (and
+#     this script by default) render metadata-only. An extension sapling has no
+#     equivalent for; the default still matches sapling exactly.
 #
 # Layout
 #   - Public base: the nearest public ancestor of HEAD. Candidate trunks are
@@ -67,8 +67,10 @@
 #     sitting on, can equal HEAD and collapse the whole draft stack. @{u} then a
 #     local main/master are last-resort fallbacks when no remote trunk exists.
 #   - Drafts: first-parent commits in `HEAD ^merge_base`, newest first
-#   - Public window: -n commits starting at base_ref (or merge_base if base
-#     is ahead of HEAD's chain)
+#   - Public window: one commit — base_ref (or merge_base if base is ahead of
+#     HEAD's chain), with "~" for the history below it. -f streams that history
+#     instead; there is no in-between, since the ╷ elision below already says
+#     which commits a fork point jumped over.
 #   - Draft trees (-b): all heads' chains union into trees; each tree renders
 #     above its root's public fork point — spine child straight up the same
 #     column, side subtrees one column deeper per fork level. With -b the public
@@ -106,7 +108,7 @@
 #     (keeps author/subject).
 #     A submodule entry (marker S — so, being a body line, -c only) expands into
 #     sub-lines under its stat line, in two groups of at most 10 lines each,
-#     every group closing with a dim "… +N more" tail when it overflows (-N
+#     every group closing with a dim "… +N more" tail when it overflows (-f
 #     lifts the cap — see Paging):
 #       - its own UNCOMMITTED changes (the wdir node only — a -c commit body
 #         has no working tree): this very stat block, recomputed with the
@@ -126,10 +128,10 @@
 #     parent; the empty tree for a root commit) under its subject row, clean or
 #     dirty, closed by a dim "N files, +X -Y" total line — and the same body
 #     under the wdir node, whose totals already live in its header. When HEAD
-#     sits directly on the trunk (no drafts), it covers every public commit in
-#     view instead (pair with -n for history). Bodies share the wdir node's
-#     format, markers and colors ('?'/U can't occur in a committed diff); an
-#     empty commit gets no body.
+#     sits directly on the trunk (no drafts), it covers the public commit in
+#     view instead (pair with -f to walk back through history). Bodies share
+#     the wdir node's format, markers and colors ('?'/U can't occur in a
+#     committed diff); an empty commit gets no body.
 #   - Author: %al (email local-part, e.g. "junz")
 #   - Refs: %D filtered to remote bookmarks plus the active local branch, shown
 #     with a trailing "*" like sapling's active bookmark — but only when no remote
@@ -159,13 +161,13 @@
 #     working on a machine without gh.
 #   - Last draft's subject line uses ╭─╯ instead of │ to bend into column 0
 #   - Final line is ~ (truncation indicator)
-#   - Compact public nodes (default; disable with -a/--all-authors): a public
+#   - Compact public nodes (default; disable with -f/--full): a public
 #     commit that is NOT HEAD and was authored by someone other than you renders
 #     metadata-only (no author, no subject line). Mirrors sapling's
 #     `sl_use_short_header`: short header iff `graphnode != @ && phase == public &&
 #     username|email != author|email`. (Source: builtin_static/production.rs.) So
 #     your own public commits and the @ commit still show author + subject in full.
-#     -a/--all-authors turns this off, showing full headers for every commit.
+#     -f/--full turns this off, showing full headers for every commit.
 #
 # Colors (ANSI; suppressed when stdout isn't a TTY or NO_COLOR is set)
 #   - Draft hash: bright-yellow + bold (\e[93;1m) — applies to ALL drafts
@@ -200,16 +202,22 @@
 #   directly; GIT_PAGER=cat disables paging outright. Colors survive paging:
 #   the TTY is probed once up front (TTY_OUT), before the wrapper's capture
 #   pipe hides it from the renderer.
-#   Infinite scroll (opt-in via -N/--no-limit): the public column does not
-#   stop at the -n window — older first-parent history streams below it, row
-#   by row, as the consumer takes it. Paged, pipe backpressure keeps `git
-#   log` from walking ahead of the pager, so scrolling keeps revealing
-#   commits like plain `git log`, down to the root commit; piped, the full
-#   history streams out, also like `git log`. Without -N the -n window and
-#   the trailing "~" are unconditional, paged or not. -N reads as "don't
-#   truncate" rather than strictly "no -n limit", so it also lifts the 10-line
-#   cap on a submodule entry's sub-lines (SUBLINE_CAP), all the way down
-#   through a nested submodule.
+#   Infinite scroll (opt-in via -f/--full): the public column does not stop at
+#   the base — older first-parent history streams below it, row by row, as the
+#   consumer takes it. Paged, pipe backpressure keeps `git log` from walking
+#   ahead of the pager, so scrolling keeps revealing commits like plain `git
+#   log`, down to the root commit; piped, the full history streams out, also
+#   like `git log`. Without -f the base row and the trailing "~" are
+#   unconditional, paged or not. -f is the one "don't abbreviate" switch, so it
+#   also un-compacts other authors' public headers and lifts the 10-line cap on
+#   a submodule entry's sub-lines (SUBLINE_CAP), all the way down through a
+#   nested submodule.
+#   What -f deliberately does NOT undo is -b's ╷ elision. This tail streams
+#   lazily and only downward, so its cost is paid one row at a time as you
+#   scroll; filling the gaps BETWEEN fork points is eager and unbounded — a
+#   branch forking 200 commits down the trunk would push every other tree off
+#   screen before you saw it. The ╷ exists to keep distant fork points
+#   adjacent, which is the whole point of the -b view.
 #
 # Relative time — mirrors sapling's `smartdate(date, 5400, age, simpledate)`:
 #   - Elapsed <= 5400s (90 min): `age()` — walks scales year→second and uses the
@@ -295,7 +303,7 @@ function cd_toplevel {
 }
 
 function smartlog_usage {
-    print -r -- "usage: $PROG [-C <path>] [-c] [-b] [-a] [-p|-P] [-n N] [-N] [--base REV]
+    print -r -- "usage: $PROG [-C <path>] [-c] [-b] [-f] [-p|-P] [--base REV]
 
 Sapling-style smartlog using only git: the current branch's draft stack
 drawn on top of its nearest public (pushed) base. A dirty working tree always
@@ -304,24 +312,25 @@ draws an \"Uncommitted changes\" node on top of HEAD, carrying its totals.
 The three view flags below are independent and combine freely.
 
   -c, --changes       show per-file changes under every commit in the current
-                      stack — or under every public commit in view when HEAD
-                      sits on the trunk (pair with -n) — and under the
-                      uncommitted node, which otherwise shows totals only
+                      stack — or under the public commit in view when HEAD
+                      sits on the trunk (pair with -f for history) — and under
+                      the uncommitted node, which otherwise shows totals only
   -b, --branches      show every other local branch as its full stack, like
                       sapling — including forks at draft commits and commits
                       stacked above HEAD
-  -a, --all-authors   show author + subject for every commit, including public
-                      commits by other authors (default: those render compact)
+  -f, --full          don't abbreviate: show author + subject on every commit
+                      (including other authors' public ones, which otherwise
+                      render metadata-only like sapling), keep streaming older
+                      public history below the base — lazily when paged, like
+                      git log — and stop capping a submodule entry's sub-lines
+                      at 10 (-b's ╷ elision stays — it keeps distant fork
+                      points adjacent, which is the point of that view)
   -p, --prs           tag shown branch names that have a GitHub PR with its
                       \"#N\" — colored by PR state, hyperlinked on a TTY
                       (needs the gh CLI); sticky — remembered per repo, so
                       later runs tag PRs without the flag
   -P, --no-prs        turn PR tagging off and forget the remembered -p
                       (wins when both are given)
-  -n, --limit N       public commits to show, including the merge-base (default 1)
-  -N, --no-limit      don't truncate: keep streaming older public history
-                      below the -n window — lazily when paged, like git log —
-                      and stop capping a submodule entry's sub-lines at 10
       --base REV      override the public base (default: nearest remote trunk, e.g.
                       origin/HEAD, origin/main, origin/master, upstream/main)
   -C <path>           run as if started in <path>, like git's own -C; repeats
@@ -409,9 +418,9 @@ typeset -g STAT_HAS_CHANGES STAT_SUMMARY
 typeset -ga STAT_BODY
 
 # Lines a submodule entry may expand to per group before the rest fold into a
-# "… +N more" tail; 0 lifts the cap entirely, which -N/--no-limit does. Read by
+# "… +N more" tail; 0 lifts the cap entirely, which -f/--full does. Read by
 # submodule_sublines, and inherited by the nested run a dirty submodule inside a
-# submodule triggers, so -N uncaps all the way down.
+# submodule triggers, so -f uncaps all the way down.
 typeset -g SUBLINE_CAP=10
 
 # Whether uncommitted_stat should build STAT_BODY at all. main clears it for the
@@ -1257,16 +1266,14 @@ function emit_subtree {
 }
 
 function main {
-    # Option parsing (zparseopts is a zsh builtin; -K keeps the ARG_LIMIT default
-    # when -n is not passed). Operates on main's own positional params ("$@").
-    local -a ARG_LIMIT=(1) ARG_NO_LIMIT=() ARG_BASE=() ARG_CHANGES=() ARG_ALL_AUTHORS=() ARG_BRANCHES=() ARG_PRS=() ARG_NO_PRS=() ARG_CD=() ARG_HELP=()
-    zparseopts -D -E -K -- \
+    # Option parsing (zparseopts is a zsh builtin). Operates on main's own
+    # positional params ("$@").
+    local -a ARG_FULL=() ARG_BASE=() ARG_CHANGES=() ARG_BRANCHES=() ARG_PRS=() ARG_NO_PRS=() ARG_CD=() ARG_HELP=()
+    zparseopts -D -E -- \
         C+:=ARG_CD \
-        {n,-limit}:=ARG_LIMIT \
-        {N,-no-limit}=ARG_NO_LIMIT \
+        {f,-full}=ARG_FULL \
         -base:=ARG_BASE \
         {c,-changes}=ARG_CHANGES \
-        {a,-all-authors}=ARG_ALL_AUTHORS \
         {b,-branches}=ARG_BRANCHES \
         {p,-prs}=ARG_PRS \
         {P,-no-prs}=ARG_NO_PRS \
@@ -1282,22 +1289,23 @@ function main {
     # so a mistyped -C says so, instead of failing later as a missing trunk.
     git rev-parse --git-dir >/dev/null 2>&1 || die "not a git repository"
     cd_toplevel
-    # The three view flags are orthogonal: -c adds a change body to every commit
-    # in view AND to the uncommitted node, -b brings in the other local branches
-    # as full stacks, -a stops compacting other authors' public commits. The
-    # uncommitted NODE is not a flag at all — it draws whenever the working tree
-    # is dirty; -c only governs whether it lists its files.
+    # The view flags are orthogonal: -c adds a change body to every commit in
+    # view AND to the uncommitted node, -b brings in the other local branches as
+    # full stacks, -f stops abbreviating. The uncommitted NODE is not a flag at
+    # all — it draws whenever the working tree is dirty; -c only governs whether
+    # it lists its files.
     local show_changes=0
     (( ${#ARG_CHANGES} )) && show_changes=1
     local show_branches=0
     (( ${#ARG_BRANCHES} )) && show_branches=1
-    local all_authors=0
-    (( ${#ARG_ALL_AUTHORS} )) && all_authors=1
-    local no_limit=0
-    (( ${#ARG_NO_LIMIT} )) && no_limit=1
-    # -N means "don't truncate": the public column keeps going, and a submodule
-    # entry stops folding its tail into "… +N more".
-    (( no_limit )) && SUBLINE_CAP=0
+    # -f is the single "don't abbreviate anything" switch, covering every place
+    # this renderer shortens what it has: the public column stops at the base
+    # (streams on instead), a submodule entry folds its tail into "… +N more"
+    # (uncapped instead), and another author's public commit renders
+    # metadata-only (full header instead).
+    local full=0
+    (( ${#ARG_FULL} )) && full=1
+    (( full )) && SUBLINE_CAP=0
     # -p is sticky per repo: an explicit -p drops a marker file in the git dir
     # (smartlog-pr-on, beside the PR cache — nothing needs gitignoring) so
     # later runs tag PRs without the flag; an explicit -P/--no-prs removes the
@@ -1332,9 +1340,9 @@ function main {
 
     # For sapling's compact-public-node rule: a public, non-HEAD commit authored
     # by someone else renders metadata-only. Compared against the configured user.
-    # Skipped under -a/--all-authors, where nothing is ever compacted.
+    # Skipped under -f/--full, where nothing is ever compacted.
     local my_email=
-    (( ! all_authors )) && my_email=$(git config user.email 2>/dev/null)
+    (( ! full )) && my_email=$(git config user.email 2>/dev/null)
 
     # The active local branch (HEAD's) is shown with a trailing "*", like sapling's
     # active bookmark — but only when no remote branch of the same name exists. If
@@ -1348,7 +1356,6 @@ function main {
         ACTIVE_BRANCH="${cur_branch}*"
     fi
 
-    local limit=${ARG_LIMIT[-1]}
     local base_arg=
     (( ${#ARG_BASE} > 0 )) && base_arg=${ARG_BASE[-1]}
 
@@ -1544,7 +1551,7 @@ function main {
         # ancestor. Neighbors that aren't parent/child render with the dotted ╷
         # spine between them.
         local -a shown
-        shown=("${(@f)$(git rev-list --first-parent "$base_ref" -n $limit)}")
+        shown=("${(@f)$(git rev-list --first-parent "$base_ref" -n 1)}")
         shown+=("$merge_base" $extra_publics)
         shown=(${(u)shown})
         if (( ${#shown} > 1 )); then
@@ -1567,10 +1574,10 @@ function main {
             publics=($shown)
         fi
     else
-        publics=("${(@f)$(git rev-list --first-parent "$base_ref" -n $limit)}")
+        publics=("${(@f)$(git rev-list --first-parent "$base_ref" -n 1)}")
         # If base_ref is ahead of HEAD's branch, anchor public column at merge_base instead.
         if [[ ${publics[(Ie)$merge_base]} -eq 0 ]]; then
-            publics=("${(@f)$(git rev-list --first-parent "$merge_base" -n $limit)}")
+            publics=("${(@f)$(git rev-list --first-parent "$merge_base" -n 1)}")
         fi
     fi
 
@@ -1708,10 +1715,10 @@ function main {
     done
 
     # The planned window, then its final row: the "~" truncation marker — or,
-    # with -N, the streamed-history tail (unless the bottom shown public IS
+    # with -f, the streamed-history tail (unless the bottom shown public IS
     # the root commit, in which case nothing is truncated to stream).
     render_plan
-    if (( no_limit )) &&
+    if (( full )) &&
        git rev-parse --verify --quiet "${publics[-1]}^" >/dev/null 2>&1; then
         stream_public_tail ${publics[-1]}
     else
@@ -1721,7 +1728,7 @@ function main {
 
 function render_plan {
     # Emit the planned render — the whole graph except its final row (the "~"
-    # truncation marker, or the first spine row of the -N streamed-history
+    # truncation marker, or the first spine row of the -f streamed-history
     # tail), which main appends. Reads main's plan/metadata/C_* state via
     # dynamic scoping, like the other render helpers.
     local spine= el= g= join= symbol= text_color= subject_body= seg= pp= bh=
@@ -1824,17 +1831,17 @@ function render_plan {
                 text_color=$C_HEAD_TEXT
             fi
             # Compact public node: not HEAD, authored by someone else →
-            # metadata-only (no author, no subject). See header. -a/--all-authors
-            # turns this off (all_authors=1), so every commit gets a full header.
+            # metadata-only (no author, no subject). See header. -f/--full
+            # turns this off (full=1), so every commit gets a full header.
             is_compact=0
-            if (( ! all_authors )) && [[ $pp != $head_sha && ${author_emails[idx]} != $my_email ]]; then
+            if (( ! full )) && [[ $pp != $head_sha && ${author_emails[idx]} != $my_email ]]; then
                 is_compact=1
             fi
             commit_header $idx $symbol '' "$C_PUBLIC_HASH" "$text_color" $is_compact ''
             subject_body="  ${text_color}${subjects[idx]}${text_color:+$C_RESET}"
             (( is_compact )) && subject_body=
             if (( pl_i == n_plan )); then
-                # The final row below this ("~" or the -N tail's spine)
+                # The final row below this ("~" or the -f tail's spine)
                 # belongs to main — see the render_plan call there.
                 print -r -- "│${subject_body}"
                 print_commit_stat $pp "│"
@@ -1854,14 +1861,14 @@ function render_plan {
 }
 
 function stream_public_tail {
-    # -N/--no-limit: instead of cutting history at "~", keep the public column
+    # -f/--full: instead of cutting history at "~", keep the public column
     # going — walk first-parent history below the bottom shown public and emit
     # rows as the consumer takes them. Paged, that means lazily: pipe
     # backpressure keeps `git log` from walking ahead of the pager, so
     # scrolling keeps revealing older commits like plain `git log`, and a
     # pager quit kills the walk via SIGPIPE. Piped, the full history streams
     # out, also like `git log`. Rendering matches the planned public rows:
-    # same compact-header rule, refs, and -a stat bodies when publics are the
+    # same compact-header rule, refs, and -c stat bodies when publics are the
     # stat targets (computed lazily, one commit at a time). Metadata appends
     # to main's arrays via dynamic scoping. Ends with "~" only at the root
     # commit; tformat (not format) terminates the last record with a newline
@@ -1881,7 +1888,7 @@ function stream_public_tail {
         # Same compact-public rule as the plan loop; a tail commit is never
         # HEAD (HEAD sits at or above the merge-base, always in the window).
         is_compact=0
-        (( ! all_authors )) && [[ $ae != $my_email ]] && is_compact=1
+        (( ! full )) && [[ $ae != $my_email ]] && is_compact=1
         if (( show_changes && ! n_drafts )); then
             uncommitted_stat $color_on 4 $fsha ${p%% *}
             if (( STAT_HAS_CHANGES )); then
@@ -1966,7 +1973,7 @@ function run_paged {
     # Run "$@" with stdout piped through stream_or_print: printed directly
     # when the output ends within the terminal height, else paged ($GIT_PAGER,
     # then git's core.pager, then $PAGER, then less) with the remainder
-    # streaming through lazily (that laziness is what makes -N viable — see
+    # streaming through lazily (that laziness is what makes -f viable — see
     # stream_public_tail). Only engages when stdout is a TTY —
     # piped/redirected output runs the command untouched, as does
     # GIT_PAGER=cat. The pipe hides the terminal from the renderer, so color

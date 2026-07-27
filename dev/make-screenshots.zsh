@@ -213,6 +213,6 @@ mkdir -p "$OUT"
 shoot smartstat.png "git smartstat" "$REPO/git-smartstat"
 # Last: -p is sticky (drops a marker in the demo's git dir), so running it
 # earlier would make any following smartlog shots tag PRs too.
-shoot cover.png     "git-smartlog -n 2 -b -a -p" "$REPO/git-smartlog" -n 2 -b -a -p
+shoot cover.png     "git-smartlog -b -f -p" "$REPO/git-smartlog" -b -f -p
 
 echo "screenshots written to $OUT"

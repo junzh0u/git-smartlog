@@ -10,14 +10,14 @@ with relative timestamps, authors, and ref decorations, closely mirroring the
 output of Sapling's `sl`. Four things depart from that mirror: a dirty working
 tree always draws an uncommitted-changes node, and three independent flags —
 `-c` for per-file change stats under your commits and your working copy, `-b` to
-fold your other local branches into the graph as full stacks, `-a` to stop
-compacting other people's public commits — combine freely on top. See below.
+fold your other local branches into the graph as full stacks, `-f` to stop
+abbreviating anything — combine freely on top. See below.
 
 The story behind it is in
 [this post](https://junz.info/writing/git-smartlog/).
 
 <p align="center">
-  <img src="screenshots/cover.png" alt="git-smartlog -n 2 -b -a -p output" width="600">
+  <img src="screenshots/cover.png" alt="git-smartlog -b -f -p output" width="600">
 </p>
 
 ## Example
@@ -48,32 +48,35 @@ pushed commit, here `origin/master` — and `~` marks the truncated history beyo
 it. This example and the next assume that clean tree: a dirty one always draws
 one more node on top, which is the section after them.
 
-Widen the public window with `-n`. Public commits authored by *someone else*
-render metadata-only (no author, no subject), exactly as Sapling does — see
-`a21fc72b55` and `80cf810025` below. Pass `-a` / `--all-authors` to turn that
-off and show the author and subject for every commit, including other people's
-public ones:
+The public column stops at that base by design — one row plus `~`. `-f` /
+`--full` is the tool's one *don't abbreviate* switch, and it lifts three
+shortenings at once. Two show up here: older public history keeps streaming
+below the base instead of stopping (lazily, into the pager, like `git log` —
+scroll and it keeps going, down to the root commit), and public commits authored
+by *someone else*, which render metadata-only by default exactly as Sapling
+does, get their author and subject back. The third is the submodule sub-line
+cap, further down.
 
 <!-- fixture: demo-clean -->
 ```text
-$ git smartlog -n 4
-  @  e6152ce8e3  14 minutes ago  junz  feat/retry-backoff*
+$ git smartlog -f
+  @  2cefe2d943  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  6f1c5c322c  Today at 17:34  junz
+  o  bc7afdc65b  Today at 18:51  junz
   │  Add exponential backoff with jitter
   │
-  o  4166003ae8  Yesterday at 20:34  junz
+  o  88395fc0f3  Yesterday at 21:51  junz
 ╭─╯  Extract retry policy into its own module
 │
-o  99b3100c38  Thursday at 20:34  junz  origin/master
+o  c08935dddd  Thursday at 21:51  junz  origin/master
 │  Bump dependencies
 │
-o  71068b2065  Wednesday at 20:34
+o  4347b66078  Wednesday at 21:51  alice
+│  Introduce typed errors
 │
-│
-o  2438d674fc  Tuesday at 20:34
-│
+o  0bff574d95  Tuesday at 21:51  alice
+│  Initial project scaffold
 ~
 ```
 
@@ -94,23 +97,20 @@ git-smartlog extension with no Sapling equivalent, so the output no longer mirro
 
 <!-- fixture: demo -->
 ```text
-$ git smartlog -n 2
+$ git smartlog
   @  Uncommitted changes  11 files, +30 -13
   │
-  o  8685566e7a  14 minutes ago  junz  feat/retry-backoff*
+  o  2cefe2d943  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  332dae7792  Today at 18:29  junz
+  o  bc7afdc65b  Today at 18:51  junz
   │  Add exponential backoff with jitter
   │
-  o  424771e9eb  Yesterday at 21:29  junz
+  o  88395fc0f3  Yesterday at 21:51  junz
 ╭─╯  Extract retry policy into its own module
 │
-o  db25b229b0  Thursday at 21:29  junz  origin/master
+o  c08935dddd  Thursday at 21:51  junz  origin/master
 │  Bump dependencies
-│
-o  2aa517301c  Wednesday at 21:29
-│
 ~
 ```
 
@@ -118,7 +118,7 @@ With `-c` / `--changes`, a per-file stat block attaches to **every commit in the
 current stack**, clean or dirty (against each commit's first parent), **and to
 the uncommitted node** — the same flag, on the same footing; sitting directly on
 the trunk (no stack), it covers **every public commit in view** instead — pair it
-with `-n` to review recent history. Commit bodies close with a dim
+with `-f` to walk back through it. Commit bodies close with a dim
 `N files, +X -Y` total line; the uncommitted node keeps its total in the header
 it already had.
 
@@ -146,7 +146,7 @@ expanding to every file inside it.
 A pure executable-bit flip (`chmod`), which `--stat` renders as `| 0`, gets a
 trailing `+x`/`-x` hint. A **submodule** (`S`) expands into sub-lines under its
 stat line, in two groups of at most 10 lines each, each closing with a dim
-`… +N more` when it overflows (`-N` lifts the cap):
+`… +N more` when it overflows (`-f` lifts the cap):
 
 - its own **uncommitted changes** — this same stat block, recomputed inside the
   submodule and indented one level in, keeping its markers, colors and bars (a
@@ -222,48 +222,46 @@ quiet: a branch merged into the trunk just labels that commit instead of adding
 a node (`prod` below), and a branch whose same-name remote ref sits at the same
 commit shows only the remote name (`origin/hotfix`). Branch names render
 **cyan**, so they stand apart from green remote refs and the yellow active
-branch. Everything composes with `-c`, `-n`, and the `-a` used here to give
-Alice's public commits their full headers:
+branch. Everything composes with `-c` and with the `-f` used here, which gives
+Alice's public commits their full headers and keeps the trunk streaming past the
+base:
 
 <!-- fixture: demo -->
 ```text
-$ git smartlog -n 2 -b -a
+$ git smartlog -b -f
   @  Uncommitted changes  11 files, +30 -13
   │
-  o  8685566e7a  14 minutes ago  junz  feat/retry-backoff*
+  o  2cefe2d943  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  332dae7792  Today at 18:29  junz  wip/backoff
+  o  bc7afdc65b  Today at 18:51  junz  wip/backoff
   │  Add exponential backoff with jitter
   │
-  │ o  2cba6cab4d  Today at 03:29  junz  spike/http3
+  │ o  cd77ef158f  Today at 03:51  junz  spike/http3
   │ │  Spike HTTP/3 transport
   │ │
-  │ │ o  3e17ebb235  Today at 02:29  junz  refactor/timeouts
+  │ │ o  2f8acd8758  Today at 02:51  junz  refactor/timeouts
   │ ├─╯  Let callers override the attempt timeout
   │ │
-  │ o  fcb3c6c361  Today at 01:29  junz
+  │ o  3688a2273e  Today at 01:51  junz
   ├─╯  Bound each attempt with a timeout
   │
-  o  424771e9eb  Yesterday at 21:29  junz
+  o  88395fc0f3  Yesterday at 21:51  junz
 ╭─╯  Extract retry policy into its own module
 │
-│ o  d0511f97bf  Friday at 21:29  junz  origin/hotfix
+│ o  b99f8bce09  Friday at 21:51  junz  origin/hotfix
 ├─╯  Patch release 0.1.1
 │
-o  db25b229b0  Thursday at 21:29  junz  origin/master
-│  Bump dependencies
+o  c08935dddd  Thursday at 21:51  junz  origin/master
+╷  Bump dependencies
+╷
+╷ o  6c827ca788  Yesterday at 20:51  junz  fix/redirect-loop
+╷ │  Abort redirect loops via CheckRedirect
+╷ │
+╷ o  6b48bb0092  Yesterday at 19:51  junz
+╭─╯  Cap redirect chains at 10 hops
 │
-o  2aa517301c  Wednesday at 21:29  alice
-│  Introduce typed errors
-│
-│ o  254752406c  Yesterday at 20:29  junz  fix/redirect-loop
-│ │  Abort redirect loops via CheckRedirect
-│ │
-│ o  249db17a80  Yesterday at 19:29  junz
-├─╯  Cap redirect chains at 10 hops
-│
-o  70357b18fd  Tuesday at 21:29  alice  prod
+o  0bff574d95  Tuesday at 21:51  alice  prod
 │  Initial project scaffold
 ~
 ```
@@ -381,7 +379,7 @@ directory, repeats composing — so you can point them at a repo without leaving
 the one you're in.
 
 ```
-usage: git-smartlog [-C <path>] [-c] [-b] [-a] [-p|-P] [-n N] [-N] [--base REV]
+usage: git-smartlog [-C <path>] [-c] [-b] [-f] [-p|-P] [--base REV]
 
 Sapling-style smartlog using only git: the current branch's draft stack
 drawn on top of its nearest public (pushed) base. A dirty working tree always
@@ -390,24 +388,25 @@ draws an "Uncommitted changes" node on top of HEAD, carrying its totals.
 The three view flags below are independent and combine freely.
 
   -c, --changes       show per-file changes under every commit in the current
-                      stack — or under every public commit in view when HEAD
-                      sits on the trunk (pair with -n) — and under the
-                      uncommitted node, which otherwise shows totals only
+                      stack — or under the public commit in view when HEAD
+                      sits on the trunk (pair with -f for history) — and under
+                      the uncommitted node, which otherwise shows totals only
   -b, --branches      show every other local branch as its full stack, like
                       sapling — including forks at draft commits and commits
                       stacked above HEAD
-  -a, --all-authors   show author + subject for every commit, including public
-                      commits by other authors (default: those render compact)
+  -f, --full          don't abbreviate: show author + subject on every commit
+                      (including other authors' public ones, which otherwise
+                      render metadata-only like sapling), keep streaming older
+                      public history below the base — lazily when paged, like
+                      git log — and stop capping a submodule entry's sub-lines
+                      at 10 (-b's ╷ elision stays — it keeps distant fork
+                      points adjacent, which is the point of that view)
   -p, --prs           tag shown branch names that have a GitHub PR with its
                       "#N" — colored by PR state, hyperlinked on a TTY
                       (needs the gh CLI); sticky — remembered per repo, so
                       later runs tag PRs without the flag
   -P, --no-prs        turn PR tagging off and forget the remembered -p
                       (wins when both are given)
-  -n, --limit N       public commits to show, including the merge-base (default 1)
-  -N, --no-limit      don't truncate: keep streaming older public history
-                      below the -n window — lazily when paged, like git log —
-                      and stop capping a submodule entry's sub-lines at 10
       --base REV      override the public base (default: nearest remote trunk, e.g.
                       origin/HEAD, origin/main, origin/master, upstream/main)
   -C <path>           run as if started in <path>, like git's own -C; repeats
@@ -517,7 +516,8 @@ empty tree so staged and untracked files still show as additions.)
   [`git-smartstat`](#git-smartstat) command runs. Without `-c` that function
   stops at the totals, skipping the marker/sort pass and the per-submodule
   expansion nobody would see.
-- **Public window** — `-n` commits starting at the base.
+- **Public window** — one commit: the base, with `~` below it. `-f` streams
+  the history below instead.
 - **Other branches** — with `-b`/`--branches`, every other local branch joins the
   graph as a single node (its head commit) above its anchor — the nearest shown
   commit down its chain: a draft of the current stack, another branch's node,
@@ -556,13 +556,18 @@ empty tree so staged and untracked files still show as additions.)
   (`$GIT_PAGER`, then git's `core.pager`, then `$PAGER`, then `less` with
   `LESS=FRX` like git). Output that fits, or piped/redirected output, prints
   directly; `GIT_PAGER=cat` disables paging. Colors survive the pager.
-- **Infinite scroll** — with `-N`/`--no-limit`, the public column doesn't stop
-  at the `-n` window: older history keeps streaming below it — lazily when
-  paged, so scrolling keeps revealing commits like plain `git log`, down to
-  the root commit. Without `-N` the window and the trailing `~` truncation row
-  are unconditional. `-N` reads as *don't truncate* rather than strictly *no
-  `-n` limit*, so it also lifts the 10-line cap on a submodule entry's
-  sub-lines — the only way to see every commit a big bump brought in.
+- **Infinite scroll** — with `-f`/`--full`, the public column doesn't stop at
+  the base: older history keeps streaming below it — lazily when paged, so
+  scrolling keeps revealing commits like plain `git log`, down to the root
+  commit. Without `-f` the base row and the trailing `~` truncation row are
+  unconditional. `-f` is the one *don't abbreviate* switch, so the same flag
+  also restores full headers on other authors' public commits and lifts the
+  10-line cap on a submodule entry's sub-lines — the only way to see every
+  commit a big bump brought in. It deliberately leaves `-b`'s `╷` elision
+  alone: this tail streams lazily and only downward, one row per scroll, while
+  filling the gaps *between* fork points is eager and unbounded — a branch
+  forking 200 commits down the trunk would push every other tree off screen.
+  Keeping distant fork points adjacent is the whole point of the `-b` view.
 
 ## Differences from Sapling's `sl`
 
@@ -592,11 +597,11 @@ empty tree so staged and untracked files still show as additions.)
   every commit in the current stack (or every public commit in view, when
   sitting on the trunk) and under the uncommitted node. Sapling has no
   equivalent; the default output is unchanged.
-- **`-a`/`--all-authors` is an extension.** By default, public commits by other
-  authors render metadata-only, exactly as Sapling does. `-a` turns that off and
-  shows the author and subject for every commit — handy on shared branches where
-  you want to see who did what. Sapling has no equivalent toggle; the default
-  output is unchanged.
+- **`-f`/`--full` is an extension.** By default, public commits by other
+  authors render metadata-only, exactly as Sapling does, and the public column
+  stops at the base. `-f` turns both off — handy on shared branches where you
+  want to see who did what, or when you want to keep scrolling back. Sapling has
+  no equivalent toggle; the default output is unchanged.
 
 ## License
 

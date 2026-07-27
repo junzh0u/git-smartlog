@@ -37,7 +37,7 @@ rm -rf "$DEMO" "$REMOTE" "$SUBREMOTE"
 
 # ── A submodule origin. Twelve commits, and the demo pins the submodule at the
 #    first, so bumping it forward gains ELEVEN — one past the cap — and the
-#    entry expands to the newest 10 plus a "… +N more" tail. -N lifts that cap,
+#    entry expands to the newest 10 plus a "… +N more" tail. -f lifts that cap,
 #    and is the only way to see the rest. ────────────────────────────────────
 git init -q --bare -b master "$SUBREMOTE"   # HEAD on master so the clone checks out
 subwork=$(mktemp -d)
@@ -531,8 +531,7 @@ Screenshot it with:
   cd $DEMO
   git smartstat       # just the uncommitted stat block, standalone
   git-smartlog        # draft stack + the uncommitted node
-  git-smartlog -n 4   # also reveals Alice's compact public nodes
-  git-smartlog -a     # ... and un-compacts them
+  git-smartlog -f     # streams past the base, un-compacting Alice's nodes
   git-smartlog -c     # a change body under every commit in the stack
   git-smartlog -b     # every other local branch as its full stack, ╷ elision
 EOF

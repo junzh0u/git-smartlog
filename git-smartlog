@@ -10,7 +10,7 @@
 #
 # Multi-call: this same file is also `git-smartstat`. Symlink it under that name
 # (e.g. `ln -s git-smartlog git-smartstat`) and the git-smartstat name runs ONLY
-# the uncommitted-changes stat — the exact body the wdir node draws — as a
+# the uncommitted-changes stat — the body the wdir node draws under -c — as a
 # standalone
 # command (`git smartstat`). Dispatch is on the invocation name ($PROG) at the
 # bottom; both names share `uncommitted_stat`, so there's no duplicated logic.
@@ -47,7 +47,8 @@
 #     width with an ellipsis (so they match in a wide terminal, differ in a narrow
 #     one).
 #   - Uncommitted changes are always shown: a dirty working tree draws a
-#     synthetic node on top of HEAD (see Format below). Sapling surfaces
+#     synthetic node on top of HEAD, one line carrying its totals (-c adds the
+#     per-file body, see Format below). Sapling surfaces
 #     working-copy changes differently, so any dirty-tree output diverges from
 #     `\sl` by that node — the idea is borrowed from jj, which treats the
 #     working copy as a commit in its own right.
@@ -80,11 +81,15 @@
 #   │  <subject>
 #   │
 #   - Symbol: @ for HEAD, o otherwise
-#   - Uncommitted changes (always on): when the working tree is dirty, a
-#     synthetic "Uncommitted changes" node is drawn on top of HEAD. Its
-#     header carries compact totals ("2 files, +69 -2"); its body is the per-file
-#     bars from `git diff --stat HEAD`, with the stat's own trailing total dropped
-#     (it lives in the header). Loose untracked files are folded into BOTH the
+#   - Uncommitted changes (node always on, body opt-in via -c): when the working
+#     tree is dirty, a synthetic "Uncommitted changes" node is drawn on top of
+#     HEAD. Its header carries compact totals ("2 files, +69 -2") and is all that
+#     draws by default — the per-file body below is -c's, on the same footing as
+#     every other commit's, so the default view stays one line per node however
+#     dirty the tree is. That body is the per-file bars from `git diff --stat
+#     HEAD`, with the stat's own trailing total dropped (it lives in the header,
+#     which is why the header can stand alone). The totals are computed the same
+#     way either way. Loose untracked files are folded into BOTH the
 #     totals and the body via a throwaway index overlay (`git add -N` against a copy
 #     of the index), so they show as new-file additions without touching the real
 #     index. A wholly-untracked directory is NOT expanded: like `git status` it
@@ -99,9 +104,10 @@
 #     in that order (A ? M D R T S U), alphabetical within each group. The @ marker
 #     moves to the node — that's where the working copy is — and HEAD drops to o
 #     (keeps author/subject).
-#     A submodule entry (marker S) expands into sub-lines under its stat line,
-#     in two groups of at most 10 lines each, every group closing with a dim
-#     "… +N more" tail when it overflows (-N lifts the cap — see Paging):
+#     A submodule entry (marker S — so, being a body line, -c only) expands into
+#     sub-lines under its stat line, in two groups of at most 10 lines each,
+#     every group closing with a dim "… +N more" tail when it overflows (-N
+#     lifts the cap — see Paging):
 #       - its own UNCOMMITTED changes (the wdir node only — a -c commit body
 #         has no working tree): this very stat block, recomputed with the
 #         submodule as cwd, indented one level in — same markers, colors and
@@ -118,12 +124,12 @@
 #   - Commit changes (opt-in via -c/--changes; sapling has no equivalent): draws
 #     every draft in the current stack its own per-file stat block (vs its first
 #     parent; the empty tree for a root commit) under its subject row, clean or
-#     dirty, closed by a dim "N files, +X -Y" total line — the wdir node still
-#     draws on top when there are uncommitted changes. When HEAD sits directly
-#     on the trunk (no drafts), it covers every public commit in view instead
-#     (pair with -n for history). Bodies share the wdir node's format, markers
-#     and colors ('?'/U can't occur in a committed diff); an empty commit gets
-#     no body.
+#     dirty, closed by a dim "N files, +X -Y" total line — and the same body
+#     under the wdir node, whose totals already live in its header. When HEAD
+#     sits directly on the trunk (no drafts), it covers every public commit in
+#     view instead (pair with -n for history). Bodies share the wdir node's
+#     format, markers and colors ('?'/U can't occur in a committed diff); an
+#     empty commit gets no body.
 #   - Author: %al (email local-part, e.g. "junz")
 #   - Refs: %D filtered to remote bookmarks plus the active local branch, shown
 #     with a trailing "*" like sapling's active bookmark — but only when no remote
@@ -293,13 +299,14 @@ function smartlog_usage {
 
 Sapling-style smartlog using only git: the current branch's draft stack
 drawn on top of its nearest public (pushed) base. A dirty working tree always
-draws an \"Uncommitted changes\" node on top of HEAD.
+draws an \"Uncommitted changes\" node on top of HEAD, carrying its totals.
 
 The three view flags below are independent and combine freely.
 
   -c, --changes       show per-file changes under every commit in the current
                       stack — or under every public commit in view when HEAD
-                      sits on the trunk (pair with -n)
+                      sits on the trunk (pair with -n) — and under the
+                      uncommitted node, which otherwise shows totals only
   -b, --branches      show every other local branch as its full stack, like
                       sapling — including forks at draft commits and commits
                       stacked above HEAD
@@ -333,7 +340,8 @@ Show uncommitted working-tree changes as a compact stat block: a summary line
 folded in and wholly-untracked directories collapse to a single entry like git
 status. Each name carries a change marker — A added, ? untracked, M modified,
 D deleted, R renamed, T typechange, S submodule, U unmerged — colored by kind.
-Prints nothing when the working tree is clean. The same block git-smartlog draws.
+Prints nothing when the working tree is clean. The same block git-smartlog draws
+under its uncommitted-changes node with -c.
 
       --color WHEN    colorize output: auto (default), always, or never
   -C <path>           run as if started in <path>, like git's own -C
@@ -405,6 +413,12 @@ typeset -ga STAT_BODY
 # submodule_sublines, and inherited by the nested run a dirty submodule inside a
 # submodule triggers, so -N uncaps all the way down.
 typeset -g SUBLINE_CAP=10
+
+# Whether uncommitted_stat should build STAT_BODY at all. main clears it for the
+# wdir node when -c is absent — the header's summary is all that renders then,
+# and everything past it (markers, colors, sorting, and the per-submodule forks
+# that expand an S entry) is work nobody reads.
+typeset -g STAT_WANT_BODY=1
 
 # filter_refs' second output: the branch names behind the refs it kept — the
 # active branch's name (even when its display is folded into the same-name
@@ -607,6 +621,7 @@ function uncommitted_stat {
     # colored, the caller styles it) and STAT_BODY (per-file body lines, marked and,
     # when color_on, colored). Reads the working tree only; never mutates the real
     # index. Shared by git-smartlog's wdir node and standalone `git-smartstat`.
+    # STAT_WANT_BODY=0 asks for the summary alone and leaves STAT_BODY empty.
     #
     # $3 (optional) = a commit: stat THAT commit's changes — against its first
     # parent, or the empty tree for a root commit — instead of the working tree
@@ -765,6 +780,14 @@ function uncommitted_stat {
         (( n_files == 1 )) && file_word=file
         STAT_SUMMARY="${n_files} ${file_word}"
         (( ins > 0 || del > 0 )) && STAT_SUMMARY+=", +${ins} -${del}"
+
+        # Summary-only caller (the wdir node without -c): stop here. Everything
+        # below only shapes STAT_BODY, and the temp index still goes away — the
+        # `always` block runs on return.
+        if (( ! STAT_WANT_BODY )); then
+            STAT_BODY=()
+            return
+        fi
 
         # Marker/color maps per body filename. Declared up here (not inside the
         # classification block) so the synthetic untracked-dir lines appended next
@@ -1260,9 +1283,10 @@ function main {
     git rev-parse --git-dir >/dev/null 2>&1 || die "not a git repository"
     cd_toplevel
     # The three view flags are orthogonal: -c adds a change body to every commit
-    # in view, -b brings in the other local branches as full stacks, -a stops
-    # compacting other authors' public commits. The uncommitted node is not a
-    # flag at all — it draws whenever the working tree is dirty.
+    # in view AND to the uncommitted node, -b brings in the other local branches
+    # as full stacks, -a stops compacting other authors' public commits. The
+    # uncommitted NODE is not a flag at all — it draws whenever the working tree
+    # is dirty; -c only governs whether it lists its files.
     local show_changes=0
     (( ${#ARG_CHANGES} )) && show_changes=1
     local show_branches=0
@@ -1411,9 +1435,16 @@ function main {
     local color_on=0
     (( TTY_OUT )) && [[ -z $NO_COLOR ]] && color_on=1
 
+    # The node's summary always draws; its per-file body is -c's, same as every
+    # commit's. Without -c, tell uncommitted_stat to stop once it has the
+    # summary — the body it would build is the expensive half (a submodule
+    # entry alone forks per submodule to expand its sub-lines).
+    (( show_changes )) || STAT_WANT_BODY=0
+
     local has_changes=0 wdir_summary=
     local -a wdir_stat
     uncommitted_stat $color_on 4       # body lines are indented "  │ " in the node
+    STAT_WANT_BODY=1                   # scoped to that one call
     has_changes=$STAT_HAS_CHANGES
     wdir_summary=$STAT_SUMMARY
     wdir_stat=("${STAT_BODY[@]}")

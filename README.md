@@ -9,9 +9,9 @@ local (unpushed) commits — drawn on top of its nearest **public** (pushed) bas
 with relative timestamps, authors, and ref decorations, closely mirroring the
 output of Sapling's `sl`. Four things depart from that mirror: a dirty working
 tree always draws an uncommitted-changes node, and three independent flags —
-`-c` for per-file change stats under your commits, `-b` to fold your other local
-branches into the graph as full stacks, `-a` to stop compacting other people's
-public commits — combine freely on top. See below.
+`-c` for per-file change stats under your commits and your working copy, `-b` to
+fold your other local branches into the graph as full stacks, `-a` to stop
+compacting other people's public commits — combine freely on top. See below.
 
 The story behind it is in
 [this post](https://junz.info/writing/git-smartlog/).
@@ -78,15 +78,54 @@ o  2438d674fc  Tuesday at 20:34
 ```
 
 A synthetic **Uncommitted changes** node is drawn on top of `HEAD` whenever the
-working tree is dirty — no flag needed: compact totals in the header,
-per-file `git diff --stat HEAD` bars in the body. Loose untracked files are folded
-into both (as new-file additions) via a throwaway index overlay, so they appear
-without touching the real index; a **wholly-untracked directory collapses to a
-single `dir/ | N files` entry** instead of expanding to every file inside it, just
-like `git status`. Each body filename is prefixed with a one-letter change marker,
-and both marker and name are color-coded by kind, on top of git's usual green/red
-`+`/`-` bars. The body is **grouped by marker**, in the order below (sorted by path
-within each group, matching `git status`):
+working tree is dirty — no flag needed. It's one line: compact totals from
+`git diff --stat HEAD`, so a dirty tree costs the graph a single row no matter
+how much is uncommitted. Loose untracked files are folded into those totals (as
+new-file additions) via a throwaway index overlay, so they count without touching
+the real index; a **wholly-untracked directory counts as one entry** rather than
+every file inside it, just like `git status`. The per-file breakdown is `-c`'s
+job — the node is a commit like any other in that respect — and that's the
+section right after this one.
+
+The `@` marker moves to the node — that's where the working
+copy is — and `HEAD` drops to an `o` (keeping its author and subject). This is a
+git-smartlog extension with no Sapling equivalent, so the output no longer mirrors
+`sl` (see [Differences](#differences-from-saplings-sl)):
+
+<!-- fixture: demo -->
+```text
+$ git smartlog -n 2
+  @  Uncommitted changes  11 files, +30 -13
+  │
+  o  8685566e7a  14 minutes ago  junz  feat/retry-backoff*
+  │  Wire backoff into the HTTP client
+  │
+  o  332dae7792  Today at 18:29  junz
+  │  Add exponential backoff with jitter
+  │
+  o  424771e9eb  Yesterday at 21:29  junz
+╭─╯  Extract retry policy into its own module
+│
+o  db25b229b0  Thursday at 21:29  junz  origin/master
+│  Bump dependencies
+│
+o  2aa517301c  Wednesday at 21:29
+│
+~
+```
+
+With `-c` / `--changes`, a per-file stat block attaches to **every commit in the
+current stack**, clean or dirty (against each commit's first parent), **and to
+the uncommitted node** — the same flag, on the same footing; sitting directly on
+the trunk (no stack), it covers **every public commit in view** instead — pair it
+with `-n` to review recent history. Commit bodies close with a dim
+`N files, +X -Y` total line; the uncommitted node keeps its total in the header
+it already had.
+
+Every body is `git diff --stat` bars with each filename prefixed by a one-letter
+change marker; both marker and name are color-coded by kind, on top of git's
+usual green/red `+`/`-` bars. Lines are **grouped by marker**, in the order below
+(sorted by path within each group, matching `git status`):
 
 | marker | meaning | color |
 | :-: | --- | --- |
@@ -99,6 +138,11 @@ within each group, matching `git status`):
 | `S` | submodule | cyan |
 | `U` | unmerged (conflict) | bold red |
 
+`?` and `U` can only occur in the uncommitted node — a committed diff has
+neither. There, too, loose untracked files show up as their own entries and a
+wholly-untracked directory collapses to a single `dir/ | N files` line instead of
+expanding to every file inside it.
+
 A pure executable-bit flip (`chmod`), which `--stat` renders as `| 0`, gets a
 trailing `+x`/`-x` hint. A **submodule** (`S`) expands into sub-lines under its
 stat line, in two groups of at most 10 lines each, each closing with a dim
@@ -108,69 +152,11 @@ stat line, in two groups of at most 10 lines each, each closing with a dim
   submodule and indented one level in, keeping its markers, colors and bars (a
   dirty submodule inside it nests again). Without this a merely dirty submodule
   says nothing at all: its recorded sha is unchanged, so git renders it as a bare
-  `| 0`.
+  `| 0`. Under a commit body there's no working tree to read, so this group is
+  the uncommitted node's alone.
 - the commits its pointer **gained or lost**, from `git diff --submodule=log`,
   newest first and dim — `›` for one gained, `‹` for one lost (a rewind); a bump
   git can't summarize (commits not present locally) adds none.
-
-The `@` marker moves to the node — that's where the working
-copy is — and `HEAD` drops to an `o` (keeping its author and subject). This is a
-git-smartlog extension with no Sapling equivalent, so the output no longer mirrors
-`sl` (see [Differences](#differences-from-saplings-sl)):
-
-<!-- fixture: demo -->
-```text
-$ git smartlog -n 2
-  @  Uncommitted changes  11 files, +30 -13
-  │  A metrics.go           | 7 +++++++
-  │  ? coverage/            | 2 files
-  │  ? retry_test.go        | 9 +++++++++
-  │  M http_client.go       | 2 +-
-  │  M retry.go             | 8 +++++++-
-  │  M scripts/release.sh   | 0 +x
-  │  D legacy.go            | 6 ------
-  │  R logging.go => log.go | 0
-  │  T config.json          | 5 +----
-  │  S vendor/timeutil      | 2 +-
-  │      ? clock.go    | 1 +
-  │      M timeutil.go | 2 ++
-  │      › v1.11.0
-  │      › v1.10.0
-  │      › v1.9.0
-  │      › v1.8.0
-  │      › v1.7.0
-  │      › v1.6.0
-  │      › v1.5.0
-  │      › v1.4.0
-  │      › v1.3.0
-  │      › v1.2.0
-  │      … +1 more
-  │  U version.go           | 4 ++++
-  │
-  o  6e3da2593c  14 minutes ago  junz  feat/retry-backoff*
-  │  Wire backoff into the HTTP client
-  │
-  o  0c83b006b2  Today at 18:08  junz
-  │  Add exponential backoff with jitter
-  │
-  o  090efdec03  Yesterday at 21:08  junz
-╭─╯  Extract retry policy into its own module
-│
-o  0fa721bda0  Thursday at 21:08  junz  origin/master
-│  Bump dependencies
-│
-o  6bcf9de32d  Wednesday at 21:08
-│
-~
-```
-
-With `-c` / `--changes`, that same per-file stat block attaches to **every commit
-in the current stack**, clean or dirty (against each commit's first parent), with
-the uncommitted node still on top; sitting directly on the trunk (no stack), it
-covers **every public commit in view** instead — pair it with `-n` to review
-recent history. Bodies share the uncommitted node's markers, colors, and
-grouping, and close with a dim `N files, +X -Y` total line (that node keeps its
-total in the header):
 
 <!-- fixture: demo -->
 ```text
@@ -243,65 +229,41 @@ Alice's public commits their full headers:
 ```text
 $ git smartlog -n 2 -b -a
   @  Uncommitted changes  11 files, +30 -13
-  │  A metrics.go           | 7 +++++++
-  │  ? coverage/            | 2 files
-  │  ? retry_test.go        | 9 +++++++++
-  │  M http_client.go       | 2 +-
-  │  M retry.go             | 8 +++++++-
-  │  M scripts/release.sh   | 0 +x
-  │  D legacy.go            | 6 ------
-  │  R logging.go => log.go | 0
-  │  T config.json          | 5 +----
-  │  S vendor/timeutil      | 2 +-
-  │      ? clock.go    | 1 +
-  │      M timeutil.go | 2 ++
-  │      › v1.11.0
-  │      › v1.10.0
-  │      › v1.9.0
-  │      › v1.8.0
-  │      › v1.7.0
-  │      › v1.6.0
-  │      › v1.5.0
-  │      › v1.4.0
-  │      › v1.3.0
-  │      › v1.2.0
-  │      … +1 more
-  │  U version.go           | 4 ++++
   │
-  o  6e3da2593c  14 minutes ago  junz  feat/retry-backoff*
+  o  8685566e7a  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  0c83b006b2  Today at 18:08  junz  wip/backoff
+  o  332dae7792  Today at 18:29  junz  wip/backoff
   │  Add exponential backoff with jitter
   │
-  │ o  2657eccd4f  Today at 03:08  junz  spike/http3
+  │ o  2cba6cab4d  Today at 03:29  junz  spike/http3
   │ │  Spike HTTP/3 transport
   │ │
-  │ │ o  da5c0f13e4  Today at 02:08  junz  refactor/timeouts
+  │ │ o  3e17ebb235  Today at 02:29  junz  refactor/timeouts
   │ ├─╯  Let callers override the attempt timeout
   │ │
-  │ o  e4f977d524  Today at 01:08  junz
+  │ o  fcb3c6c361  Today at 01:29  junz
   ├─╯  Bound each attempt with a timeout
   │
-  o  090efdec03  Yesterday at 21:08  junz
+  o  424771e9eb  Yesterday at 21:29  junz
 ╭─╯  Extract retry policy into its own module
 │
-│ o  f2c2a36ab1  Friday at 21:08  junz  origin/hotfix
+│ o  d0511f97bf  Friday at 21:29  junz  origin/hotfix
 ├─╯  Patch release 0.1.1
 │
-o  0fa721bda0  Thursday at 21:08  junz  origin/master
+o  db25b229b0  Thursday at 21:29  junz  origin/master
 │  Bump dependencies
 │
-o  6bcf9de32d  Wednesday at 21:08  alice
+o  2aa517301c  Wednesday at 21:29  alice
 │  Introduce typed errors
 │
-│ o  91c6ddd683  Yesterday at 20:08  junz  fix/redirect-loop
+│ o  254752406c  Yesterday at 20:29  junz  fix/redirect-loop
 │ │  Abort redirect loops via CheckRedirect
 │ │
-│ o  2b8a34e6c4  Yesterday at 19:08  junz
+│ o  249db17a80  Yesterday at 19:29  junz
 ├─╯  Cap redirect chains at 10 hops
 │
-o  e94441f952  Tuesday at 21:08  alice  prod
+o  70357b18fd  Tuesday at 21:29  alice  prod
 │  Initial project scaffold
 ~
 ```
@@ -315,62 +277,38 @@ window back to the default and the elision shows up too:
 ```text
 $ git smartlog -b
   @  Uncommitted changes  11 files, +30 -13
-  │  A metrics.go           | 7 +++++++
-  │  ? coverage/            | 2 files
-  │  ? retry_test.go        | 9 +++++++++
-  │  M http_client.go       | 2 +-
-  │  M retry.go             | 8 +++++++-
-  │  M scripts/release.sh   | 0 +x
-  │  D legacy.go            | 6 ------
-  │  R logging.go => log.go | 0
-  │  T config.json          | 5 +----
-  │  S vendor/timeutil      | 2 +-
-  │      ? clock.go    | 1 +
-  │      M timeutil.go | 2 ++
-  │      › v1.11.0
-  │      › v1.10.0
-  │      › v1.9.0
-  │      › v1.8.0
-  │      › v1.7.0
-  │      › v1.6.0
-  │      › v1.5.0
-  │      › v1.4.0
-  │      › v1.3.0
-  │      › v1.2.0
-  │      … +1 more
-  │  U version.go           | 4 ++++
   │
-  o  6e3da2593c  14 minutes ago  junz  feat/retry-backoff*
+  o  8685566e7a  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  0c83b006b2  Today at 18:08  junz  wip/backoff
+  o  332dae7792  Today at 18:29  junz  wip/backoff
   │  Add exponential backoff with jitter
   │
-  │ o  2657eccd4f  Today at 03:08  junz  spike/http3
+  │ o  2cba6cab4d  Today at 03:29  junz  spike/http3
   │ │  Spike HTTP/3 transport
   │ │
-  │ │ o  da5c0f13e4  Today at 02:08  junz  refactor/timeouts
+  │ │ o  3e17ebb235  Today at 02:29  junz  refactor/timeouts
   │ ├─╯  Let callers override the attempt timeout
   │ │
-  │ o  e4f977d524  Today at 01:08  junz
+  │ o  fcb3c6c361  Today at 01:29  junz
   ├─╯  Bound each attempt with a timeout
   │
-  o  090efdec03  Yesterday at 21:08  junz
+  o  424771e9eb  Yesterday at 21:29  junz
 ╭─╯  Extract retry policy into its own module
 │
-│ o  f2c2a36ab1  Friday at 21:08  junz  origin/hotfix
+│ o  d0511f97bf  Friday at 21:29  junz  origin/hotfix
 ├─╯  Patch release 0.1.1
 │
-o  0fa721bda0  Thursday at 21:08  junz  origin/master
+o  db25b229b0  Thursday at 21:29  junz  origin/master
 ╷  Bump dependencies
 ╷
-╷ o  91c6ddd683  Yesterday at 20:08  junz  fix/redirect-loop
+╷ o  254752406c  Yesterday at 20:29  junz  fix/redirect-loop
 ╷ │  Abort redirect loops via CheckRedirect
 ╷ │
-╷ o  2b8a34e6c4  Yesterday at 19:08  junz
+╷ o  249db17a80  Yesterday at 19:29  junz
 ╭─╯  Cap redirect chains at 10 hops
 │
-o  e94441f952  Tuesday at 21:08  prod
+o  70357b18fd  Tuesday at 21:29  prod
 │
 ~
 ```
@@ -447,13 +385,14 @@ usage: git-smartlog [-C <path>] [-c] [-b] [-a] [-p|-P] [-n N] [-N] [--base REV]
 
 Sapling-style smartlog using only git: the current branch's draft stack
 drawn on top of its nearest public (pushed) base. A dirty working tree always
-draws an "Uncommitted changes" node on top of HEAD.
+draws an "Uncommitted changes" node on top of HEAD, carrying its totals.
 
 The three view flags below are independent and combine freely.
 
   -c, --changes       show per-file changes under every commit in the current
                       stack — or under every public commit in view when HEAD
-                      sits on the trunk (pair with -n)
+                      sits on the trunk (pair with -n) — and under the
+                      uncommitted node, which otherwise shows totals only
   -b, --branches      show every other local branch as its full stack, like
                       sapling — including forks at draft commits and commits
                       stacked above HEAD
@@ -498,7 +437,8 @@ Show uncommitted working-tree changes as a compact stat block: a summary line
 folded in and wholly-untracked directories collapse to a single entry like git
 status. Each name carries a change marker — A added, ? untracked, M modified,
 D deleted, R renamed, T typechange, S submodule, U unmerged — colored by kind.
-Prints nothing when the working tree is clean. The same block git-smartlog draws.
+Prints nothing when the working tree is clean. The same block git-smartlog draws
+under its uncommitted-changes node with -c.
 
       --color WHEN    colorize output: auto (default), always, or never
   -C <path>           run as if started in <path>, like git's own -C
@@ -564,17 +504,19 @@ empty tree so staged and untracked files still show as additions.)
   `main`/`master` are last-resort fallbacks when no remote trunk exists.
 - **Drafts** — first-parent commits in `HEAD ^base`, newest first.
 - **Uncommitted changes** — whenever `git status` is non-empty, a synthetic
-  node on top of `HEAD`: compact totals in the header
-  (`git diff --shortstat`) and per-file `git diff --stat HEAD` bars in the body,
-  both computed against a throwaway index overlay that intent-to-adds loose
+  node on top of `HEAD` carrying compact totals; the `@` marker moves there.
+  With `-c` it also gets per-file `git diff --stat HEAD` bars. Totals and bars
+  alike are computed against a throwaway index overlay that intent-to-adds loose
   untracked files so they're folded in without mutating the repo (a wholly-untracked
   directory instead collapses to one `dir/ | N files` entry, like `git status`).
   Each body filename gets a
   one-letter change marker (`A`/`?`/`M`/`D`/`R`/`T`/`S`/`U`, from `git diff --raw`,
   plus the porcelain status for conflicts) colored by kind (see the marker table
-  above), and a `+x`/`-x` hint on executable-bit flips; the `@`
-  marker moves there. This block is computed by the in-file `uncommitted_stat`
-  function — the same code the [`git-smartstat`](#git-smartstat) command runs.
+  above), and a `+x`/`-x` hint on executable-bit flips. This block is computed by
+  the in-file `uncommitted_stat` function — the same code the
+  [`git-smartstat`](#git-smartstat) command runs. Without `-c` that function
+  stops at the totals, skipping the marker/sort pass and the per-submodule
+  expansion nobody would see.
 - **Public window** — `-n` commits starting at the base.
 - **Other branches** — with `-b`/`--branches`, every other local branch joins the
   graph as a single node (its head commit) above its anchor — the nearest shown
@@ -640,16 +582,16 @@ empty tree so staged and untracked files still show as additions.)
 - **Long subjects shown in full.** Sapling truncates them to the terminal width
   with an ellipsis.
 - **The uncommitted node is an extension, not a mirror.** On a clean tree the
-  output tracks Sapling's `sl` closely, but the node (with its `git diff --stat`
-  body) has no Sapling equivalent — the idea is borrowed from
+  output tracks Sapling's `sl` closely, but the node has no Sapling
+  equivalent — the idea is borrowed from
   [Jujutsu](https://github.com/jj-vcs/jj), which treats the working copy as a
   commit in its own right; Sapling surfaces working-copy changes differently.
   Unlike the flags below it is always on, so any dirty-tree output diverges from
   `sl` by that node.
-- **`-c`/`--changes` is an extension too.** It reuses that stat body for
-  committed changes, under every commit in the current stack (or every public
-  commit in view, when sitting on the trunk). Sapling has no equivalent; the
-  default output is unchanged.
+- **`-c`/`--changes` is an extension too.** It draws a per-file stat body under
+  every commit in the current stack (or every public commit in view, when
+  sitting on the trunk) and under the uncommitted node. Sapling has no
+  equivalent; the default output is unchanged.
 - **`-a`/`--all-authors` is an extension.** By default, public commits by other
   authors render metadata-only, exactly as Sapling does. `-a` turns that off and
   shows the author and subject for every commit — handy on shared branches where

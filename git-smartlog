@@ -1,5 +1,5 @@
 #!/usr/bin/env zsh
-# Sapling-style smartlog using only git.
+# Sapling-inspired smartlog using only git.
 #
 # Self-contained: a single file depending only on zsh and git, so it can be
 # downloaded and run standalone — no other files from this repo are required. The
@@ -19,43 +19,34 @@
 # sync when adding/changing options. The _git-<name> naming makes them cover
 # the `git smartlog` / `git smartstat` subcommand forms too.
 #
-# Differences from sapling's `sl`
-#   - Single stack only: renders the CURRENT HEAD's first-parent draft chain plus
-#     its public base. Sapling's smartlog renders EVERY draft branch as its own
-#     stack through a full DAG renderer (renderdag) ordered by an internal
-#     topo-sort; this script deliberately does not — other local branches and
-#     draft heads won't appear by default. On a CLEAN working tree the output
-#     matches `\sl` exactly when you're working a single branch (the common
-#     case); a dirty one always adds the wdir node below.
+# Views
+#   - Single stack by default: renders the CURRENT HEAD's first-parent draft
+#     chain plus its public base. Other local branches and draft heads do not
+#     appear unless -b asks for them.
 #   - Other branches (opt-in via -b/--branches): every other local branch
-#     renders its COMPLETE first-parent stack, sapling-style. All heads' chains
-#     union into a forest of draft trees, so a branch forking from a draft shows
-#     as a real fork, and commits stacked ABOVE HEAD — a branch containing HEAD
-#     while you're checked out mid-stack — appear too, with @ drawn mid-tree. At
-#     each fork the spine child (the one on HEAD's path, else the newest
-#     subtree) continues the column; each other child opens a column one level
-#     deeper ("│ o" rows), newest first, closing with a ├─╯ bend right above the
-#     fork — the contiguous-chain linearization sapling's renderdag produces,
-#     verified against it. A branch merged into the trunk labels that commit
-#     instead of adding a node; a branch whose same-name remote ref sits at the
-#     same commit shows only the remote name (same rule as the active branch).
-#     Public commits jumped over between fork points elide to sapling's dotted ╷
-#     spine, and a tree bends ╭─╯ off a dotted-or-empty spine but forks ├─╯ off a
-#     solid one, exactly like sapling. When the tree is dirty the wdir node draws
-#     directly above HEAD at HEAD's depth.
-#   - Long subjects are shown in full; sapling truncates them to the terminal
-#     width with an ellipsis (so they match in a wide terminal, differ in a narrow
-#     one).
+#     renders its COMPLETE first-parent stack. All heads' chains union into a
+#     forest of draft trees, so a branch forking from a draft shows as a real
+#     fork, and commits stacked ABOVE HEAD — a branch containing HEAD while
+#     you're checked out mid-stack — appear too, with @ drawn mid-tree. At each
+#     fork the spine child (the one on HEAD's path, else the newest subtree)
+#     continues the column; each other child opens a column one level deeper
+#     ("│ o" rows), newest first, closing with a ├─╯ bend right above the fork —
+#     the contiguous-chain linearization borrowed from sapling's renderdag.
+#     A branch merged into the trunk labels that commit instead of adding a
+#     node; a branch whose same-name remote ref sits at the same commit shows
+#     only the remote name (same rule as the active branch). Public commits
+#     jumped over between fork points elide to a dotted ╷ spine, and a tree
+#     bends ╭─╯ off a dotted-or-empty spine but forks ├─╯ off a solid one. When
+#     the tree is dirty the wdir node draws directly above HEAD at HEAD's depth.
+#   - Long subjects are shown in full — never truncated to the terminal width,
+#     so a long one wraps instead of ending in an ellipsis.
 #   - Uncommitted changes are always shown: a dirty working tree draws a
 #     synthetic node on top of HEAD, one line carrying its totals (-c adds the
-#     per-file body, see Format below). Sapling surfaces
-#     working-copy changes differently, so any dirty-tree output diverges from
-#     `\sl` by that node — the idea is borrowed from jj, which treats the
+#     per-file body, see Format below). Borrowed from jj, which treats the
 #     working copy as a commit in its own right.
 #   - Optional full headers: with -f/--full, every commit shows its author and
-#     subject — including public commits by other people, which sapling (and
-#     this script by default) render metadata-only. An extension sapling has no
-#     equivalent for; the default still matches sapling exactly.
+#     subject — including public commits by other people, which render
+#     metadata-only by default.
 #
 # Layout
 #   - Public base: the nearest public ancestor of HEAD. Candidate trunks are
@@ -123,7 +114,7 @@
 #     A clean submodule at an unchanged sha isn't in the diff at all; a clean
 #     bump's S line still stands alone if git can't summarize it. Commit bodies
 #     (-c) get the commit group only — a commit has no working tree.
-#   - Commit changes (opt-in via -c/--changes; sapling has no equivalent): draws
+#   - Commit changes (opt-in via -c/--changes): draws
 #     every draft in the current stack its own per-file stat block (vs its first
 #     parent; the empty tree for a root commit) under its subject row, clean or
 #     dirty, closed by a dim "N files, +X -Y" total line — and the same body
@@ -231,12 +222,12 @@
 #         eden/scm/lib/config/loader/src/builtin_static/production.rs (sl_date_threshold).
 #
 # Iteration
-#   `sl` is aliased to git-smartlog, so escape with `\sl` to invoke the real
-#   sapling binary. To validate, compare BOTH rendered text AND raw ANSI codes
-#   (GIT_PAGER=cat: `script` hands the run a pty, which would engage the pager):
-#       diff <(\sl) <(git smartlog)
-#       diff <(\sl --color=always | cat -v) <(script -q /dev/null env GIT_PAGER=cat git-smartlog | cat -v)
-#   Sapling emits "[0;Nm" forms while this script uses "[Nm"; visually identical.
+#   ./test/test-readme-examples.zsh replays every example in README.md against a
+#   freshly built fixture repo and diffs it against what this script prints now;
+#   --update re-captures them. That, not a comparison against sapling, is what
+#   says the renderer still works — the views have diverged far enough that a
+#   diff against `sl` is noise. See CLAUDE.md.
+#   To read raw ANSI back from a TTY-only run: script -q /dev/null <cmd> | cat -v
 
 zmodload zsh/datetime  # provides $EPOCHSECONDS and builtin strftime (no fork)
 # Only the zstat builtin (-p cache freshness) — a full zsh/stat load would
@@ -304,7 +295,7 @@ function cd_toplevel {
 function smartlog_usage {
     print -r -- "usage: $PROG [-C <path>] [-c] [-b] [-f] [-p|-P] [--base REV]
 
-Sapling-style smartlog using only git: the current branch's draft stack
+Sapling-inspired smartlog using only git: the current branch's draft stack
 drawn on top of its nearest public (pushed) base. A dirty working tree always
 draws an \"Uncommitted changes\" node on top of HEAD, carrying its totals.
 
@@ -314,12 +305,12 @@ The three view flags below are independent and combine freely.
                       stack — or under the public commit in view when HEAD
                       sits on the trunk (pair with -f for history) — and under
                       the uncommitted node, which otherwise shows totals only
-  -b, --branches      show every other local branch as its full stack, like
-                      sapling — including forks at draft commits and commits
-                      stacked above HEAD
+  -b, --branches      show every other local branch as its full stack —
+                      including forks at draft commits and commits stacked
+                      above HEAD
   -f, --full          don't abbreviate: show author + subject on every commit
                       (including other authors' public ones, which otherwise
-                      render metadata-only like sapling), keep streaming older
+                      render metadata-only), keep streaming older
                       public history below the base — lazily when paged, like
                       git log — and stop capping a submodule entry's sub-lines
                       at 10 (-b's ╷ elision stays — it keeps distant fork
@@ -507,7 +498,7 @@ function reltime {
 function filter_refs {
     # Operates on %D from `git log --decorate=full`, so every ref is a full path:
     #   "HEAD -> refs/heads/feat, refs/remotes/origin/feat, refs/tags/v1, ..."
-    # Mirror what sapling shows: remote bookmarks (refs/remotes/*) plus the active
+    # Follows sapling's rule: remote bookmarks (refs/remotes/*) plus the active
     # local branch as $ACTIVE_BRANCH ("name*"), precomputed in main(). Inactive
     # local branches and tags are hidden, as is the active branch when a remote of
     # the same name exists (sapling shows only the remote bookmark — e.g. `master`
@@ -1076,7 +1067,7 @@ function commit_header {
     filter_refs "${refs[$i]}"
     local refs_clean=$REPLY
 
-    # Color each ref by kind, matching sapling: the active local branch
+    # Color each ref by kind, following sapling's defaults: the active local branch
     # ($ACTIVE_BRANCH, the "name*" token) is yellow, remote bookmarks green, and
     # local branch names attached by -b cyan — a deliberate deviation from
     # sapling's green sl.book, so local branches stand apart from remote refs.
@@ -1181,7 +1172,8 @@ function emit_subtree {
     # closes a column. $2 is the row prefix of this subtree's column (the trunk
     # gutter plus one "│ " per enclosing draft column).
     #
-    # Layout mirrors sapling (verified against renderdag output): at a fork,
+    # Layout follows sapling's renderdag (verified against its output when this
+    # was written): at a fork,
     # the spine child — the one on HEAD's path, else the newest subtree —
     # continues this column straight up; every other child renders as its own
     # complete column one level deeper, newest first, closing with a ├─╯ bend
@@ -1510,7 +1502,7 @@ function main {
     # Union every head's first-parent chain into a forest. Shared prefixes
     # dedup via in_draft (a chain stops as soon as it meets a known commit), so
     # branches forking from a draft — or containing HEAD, i.e. stacked above it —
-    # come out as one tree with fork nodes, exactly what sapling renders. Each
+    # come out as one tree with fork nodes. Each
     # tree's root hangs off the public commit its first parent points at (which
     # joins the shown publics); HEAD's own chain is walked first so the tree
     # containing HEAD prefers its path as the spine.
@@ -1662,8 +1654,8 @@ function main {
     # carries at that point: '' above the topmost public, '│' solid
     # (parent/child adjacent), '╷' dotted (commits elided between). Stack and
     # branch rows take the matching gutter prefix, and their join row bends
-    # ╭─╯ off a dotted-or-empty spine but forks ├─╯ off a solid one — exactly
-    # how sapling renders it.
+    # ╭─╯ off a dotted-or-empty spine but forks ├─╯ off a solid one, the way
+    # sapling's renderdag does.
     # -b: mark HEAD's first-parent path (spine preference), find HEAD's tree
     # root, and memoize per-subtree newest epochs for ordering.
     local -A on_head_path sub_epoch

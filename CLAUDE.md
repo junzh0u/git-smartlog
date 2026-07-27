@@ -41,3 +41,17 @@
   existing shot, extend `make-demo.zsh` to exercise it and/or add a `shoot`
   line for a new image.
 - Update the files in `completions/` to match any option change.
+
+## Sapling
+
+The tool started as a mimic of sapling's `sl` and still owes it the graph
+layout, the relative-time format and the color defaults — the citations in the
+script (`smartdate`, `sl_use_short_header`, renderdag, `builtin_static/
+production.rs`) explain why those rules have the shape they do, and are worth
+keeping.
+
+What was deliberately dropped is **parity**: the views have diverged far enough
+(the uncommitted node, `-c`, `-b`, `-f`) that `diff <(\sl) <(git smartlog)` is
+noise, so don't reach for it, don't restore a "Differences from sapling"
+section, and don't describe behavior as matching `sl`. The README replay test is
+what says the renderer still works.

@@ -1,17 +1,23 @@
 # git-smartlog
 
-A [Sapling](https://sapling-scm.com/)-style `smartlog` for plain Git, in a single
-self-contained zsh script. The same file doubles as
+A [Sapling](https://sapling-scm.com/)-inspired `smartlog` for plain Git, in a
+single self-contained zsh script. The same file doubles as
 [`git-smartstat`](#git-smartstat), a standalone view of uncommitted changes.
 
 It renders the current branch's **draft stack** — the first-parent chain of your
 local (unpushed) commits — drawn on top of its nearest **public** (pushed) base,
-with relative timestamps, authors, and ref decorations, closely mirroring the
-output of Sapling's `sl`. Four things depart from that mirror: a dirty working
-tree always draws an uncommitted-changes node, and three independent flags —
+with relative timestamps, authors, and ref decorations. A dirty working tree
+always draws an uncommitted-changes node on top, and three independent flags —
 `-c` for per-file change stats under your commits and your working copy, `-b` to
 fold your other local branches into the graph as full stacks, `-f` to stop
-abbreviating anything — combine freely on top. See below.
+abbreviating anything — combine freely. See below.
+
+It began as a mimic of Sapling's `sl`, and still owes it the graph layout, the
+relative-time format and the color defaults. It has since grown enough of its
+own that it no longer tracks `sl`'s output, and isn't trying to. The
+uncommitted-changes node is borrowed from
+[Jujutsu](https://github.com/jj-vcs/jj), which treats the working copy as a
+commit in its own right.
 
 The story behind it is in
 [this post](https://junz.info/writing/git-smartlog/).
@@ -53,9 +59,8 @@ The public column stops at that base by design — one row plus `~`. `-f` /
 shortenings at once. Two show up here: older public history keeps streaming
 below the base instead of stopping (lazily, into the pager, like `git log` —
 scroll and it keeps going, down to the root commit), and public commits authored
-by *someone else*, which render metadata-only by default exactly as Sapling
-does, get their author and subject back. The third is the submodule sub-line
-cap, further down.
+by *someone else*, which render metadata-only by default, get their author and
+subject back. The third is the submodule sub-line cap, further down.
 
 <!-- fixture: demo-clean -->
 ```text
@@ -91,9 +96,7 @@ job — the node is a commit like any other in that respect — and that's the
 section right after this one.
 
 The `@` marker moves to the node — that's where the working
-copy is — and `HEAD` drops to an `o` (keeping its author and subject). This is a
-git-smartlog extension with no Sapling equivalent, so the output no longer mirrors
-`sl` (see [Differences](#differences-from-saplings-sl)):
+copy is — and `HEAD` drops to an `o` (keeping its author and subject):
 
 <!-- fixture: demo -->
 ```text
@@ -212,12 +215,12 @@ o  0fa721bda0  Thursday at 21:08  junz  origin/master
 ```
 
 With `-b` / `--branches`, every **other local branch** joins the graph too, each
-rendering its **complete stack**, exactly as Sapling draws it. All heads' chains
+rendering its **complete stack**. All heads' chains
 union into a forest, so a branch **forking from a draft commit** shows as a real
 fork, and commits **stacked above `HEAD`** — a branch containing `HEAD` while
 you're checked out mid-stack — appear too, with `@` drawn mid-tree. Fork points
 join the public column no matter how far down they sit, and commits skipped
-between them elide to Sapling's dotted `╷` spine. Two rules keep the graph
+between them elide to a dotted `╷` spine. Two rules keep the graph
 quiet: a branch merged into the trunk just labels that commit instead of adding
 a node (`prod` below), and a branch whose same-name remote ref sits at the same
 commit shows only the remote name (`origin/hotfix`). Branch names render
@@ -313,8 +316,8 @@ o  70357b18fd  Tuesday at 21:29  prod
 
 Here `refactor/timeouts` forks off a draft of the current stack and
 `spike/http3` off a draft of *that* branch, so the layout nests one level
-further — what Sapling's renderdag produces for the same topology, verified
-against it. Below `origin/master`, `fix/redirect-loop`'s fork point sits two
+further. Sibling subtrees render newest-first, and the child on `HEAD`'s path
+continues the column. Below `origin/master`, `fix/redirect-loop`'s fork point sits two
 commits down the trunk, so the commit between them elides to the dotted `╷`
 spine. A dirty working tree draws its uncommitted node directly above `HEAD`,
 wherever `HEAD` sits in the tree.
@@ -368,7 +371,7 @@ with:
 
 ```sh
 zstyle ':completion:*:*:git:*' user-commands \
-    smartlog:'sapling-style smartlog' \
+    smartlog:'draft stack over its public base' \
     smartstat:'uncommitted working-tree stat block'
 ```
 
@@ -381,7 +384,7 @@ the one you're in.
 ```
 usage: git-smartlog [-C <path>] [-c] [-b] [-f] [-p|-P] [--base REV]
 
-Sapling-style smartlog using only git: the current branch's draft stack
+Sapling-inspired smartlog using only git: the current branch's draft stack
 drawn on top of its nearest public (pushed) base. A dirty working tree always
 draws an "Uncommitted changes" node on top of HEAD, carrying its totals.
 
@@ -391,12 +394,12 @@ The three view flags below are independent and combine freely.
                       stack — or under the public commit in view when HEAD
                       sits on the trunk (pair with -f for history) — and under
                       the uncommitted node, which otherwise shows totals only
-  -b, --branches      show every other local branch as its full stack, like
-                      sapling — including forks at draft commits and commits
-                      stacked above HEAD
+  -b, --branches      show every other local branch as its full stack —
+                      including forks at draft commits and commits stacked
+                      above HEAD
   -f, --full          don't abbreviate: show author + subject on every commit
                       (including other authors' public ones, which otherwise
-                      render metadata-only like sapling), keep streaming older
+                      render metadata-only), keep streaming older
                       public history below the base — lazily when paged, like
                       git log — and stop capping a submodule entry's sub-lines
                       at 10 (-b's ╷ elision stays — it keeps distant fork
@@ -522,9 +525,11 @@ empty tree so staged and untracked files still show as additions.)
   is unioned into a forest of draft trees (shared prefixes dedup), each rendered
   above its root's public fork point: the spine child continues the column, side
   subtrees open one column deeper per fork level and close with a `├─╯` bend
-  above the fork. Includes commits stacked above `HEAD`. Fork points are added
+  above the fork. Sibling subtrees order by newest commit date and the spine
+  prefers `HEAD`'s path — Git has no revision numbers to sort by. Includes
+  commits stacked above `HEAD`. Fork points are added
   to the public column no matter how far down they sit, with commits skipped
-  between them eliding to Sapling's dotted `╷` spine. Branch names render cyan
+  between them eliding to a dotted `╷` spine. Branch names render cyan
   so they stand apart from green remote refs. Two branches don't get a node of
   their own: one merged into the trunk (its head *is* the merge-base) labels
   that public commit instead, and one whose same-name remote ref sits at the
@@ -545,6 +550,8 @@ empty tree so staged and untracked files still show as additions.)
   removes the marker and turns tagging off (winning when both are given).
   When tagging is on only via the marker, a missing `gh` warns instead of
   erroring, so plain runs keep working on a machine without it.
+- **Subjects** — shown in full, never truncated to the terminal width, so a
+  long one wraps rather than ending in an ellipsis.
 - **Color** — ANSI, automatically suppressed when stdout isn't a TTY or `NO_COLOR`
   is set.
 - **Paging** — output taller than the terminal is piped through a pager
@@ -563,40 +570,6 @@ empty tree so staged and untracked files still show as additions.)
   filling the gaps *between* fork points is eager and unbounded — a branch
   forking 200 commits down the trunk would push every other tree off screen.
   Keeping distant fork points adjacent is the whole point of the `-b` view.
-
-## Differences from Sapling's `sl`
-
-- **Single stack only.** It renders the current `HEAD`'s first-parent draft chain
-  plus its public base. Sapling renders *every* draft branch as its own stack via
-  a full DAG renderer; this script deliberately does not, so other local branches
-  and draft heads won't appear by default. Output matches `sl` exactly when you're
-  working a single branch (the common case).
-- **`-b`/`--branches` is the parity mode.** Without it only the current stack
-  is drawn, where Sapling always renders every draft branch. With it you get
-  full per-branch stacks in the same contiguous-chain layout Sapling's renderdag
-  produces (verified against it); branch names are cyan rather than Sapling's
-  green `sl.book`, so local branches read differently from remote refs. The
-  remaining differences are ordering heuristics: Sapling sorts by its local
-  revision numbers, which Git doesn't have, so sibling subtrees order by newest
-  commit date and the spine prefers `HEAD`'s path.
-- **Long subjects shown in full.** Sapling truncates them to the terminal width
-  with an ellipsis.
-- **The uncommitted node is an extension, not a mirror.** On a clean tree the
-  output tracks Sapling's `sl` closely, but the node has no Sapling
-  equivalent — the idea is borrowed from
-  [Jujutsu](https://github.com/jj-vcs/jj), which treats the working copy as a
-  commit in its own right; Sapling surfaces working-copy changes differently.
-  Unlike the flags below it is always on, so any dirty-tree output diverges from
-  `sl` by that node.
-- **`-c`/`--changes` is an extension too.** It draws a per-file stat body under
-  every commit in the current stack (or every public commit in view, when
-  sitting on the trunk) and under the uncommitted node. Sapling has no
-  equivalent; the default output is unchanged.
-- **`-f`/`--full` is an extension.** By default, public commits by other
-  authors render metadata-only, exactly as Sapling does, and the public column
-  stops at the base. `-f` turns both off — handy on shared branches where you
-  want to see who did what, or when you want to keep scrolling back. Sapling has
-  no equivalent toggle; the default output is unchanged.
 
 ## License
 

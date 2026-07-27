@@ -31,6 +31,7 @@ _git-smartlog() {
         '(-n --limit)'{-n+,--limit=}'[public commits to show, incl. merge-base (default 1)]:count' \
         '(-N --no-limit)'{-N,--no-limit}'[keep streaming older history below the -n window, like git log]' \
         '--base=[override the public base (default: nearest remote trunk)]:revision:_git-smartlog_base' \
+        '*-C+[run as if started in <path>, like git'\''s own -C]:directory:_directories' \
         '(- *)'{-h,--help}'[show help and exit]'
 }
 

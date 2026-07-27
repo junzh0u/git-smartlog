@@ -257,8 +257,36 @@ function die {
     exit 1
 }
 
+function cd_dash_C {
+    # Apply the -C <path> occurrences in $@ (zparseopts' flag/value pairs), in
+    # order and each relative to the last — git's own -C semantics: run as if
+    # git-smartlog had been started in that directory.
+    local -i ci=
+    for ((ci = 2; ci <= $#; ci += 2)); do
+        cd -q -- ${@[ci]} 2>/dev/null || die "cannot change to '${@[ci]}'"
+    done
+}
+
+function cd_toplevel {
+    # Work from the repository root. Every path this script hands git is
+    # ROOT-relative, because that is what `git diff` prints — but git resolves a
+    # relative GIT_INDEX_FILE against the top level, not the cwd, so from a
+    # subdirectory `--git-path index`'s "../../.git/index" pointed outside the
+    # repo: an empty index, and every tracked file rendered as deleted. `git
+    # ls-files` compounds it by scoping to the cwd, silently dropping untracked
+    # files elsewhere in the tree, and a submodule pathspec has the same
+    # mismatch. Moving to the top level fixes the class of them at once; nothing
+    # here takes a path argument, so the cwd carries no other meaning. Outside a
+    # worktree (bare repo) there is nothing to move to — leave it be and let the
+    # callers fail with their own messages.
+    local top=
+    top=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+    [[ -n $top ]] && cd -q -- "$top"
+    return 0
+}
+
 function smartlog_usage {
-    print -r -- "usage: $PROG [-c] [-b] [-a] [-p|-P] [-n N] [-N] [--base REV]
+    print -r -- "usage: $PROG [-C <path>] [-c] [-b] [-a] [-p|-P] [-n N] [-N] [--base REV]
 
 Sapling-style smartlog using only git: the current branch's draft stack
 drawn on top of its nearest public (pushed) base. A dirty working tree always
@@ -285,6 +313,8 @@ The three view flags below are independent and combine freely.
                       history below it — lazily when paged — like git log
       --base REV      override the public base (default: nearest remote trunk, e.g.
                       origin/HEAD, origin/main, origin/master, upstream/main)
+  -C <path>           run as if started in <path>, like git's own -C; repeats
+                      compose, each relative to the last
   -h, --help          show this help and exit
 
 Output taller than the terminal is paged (\$GIT_PAGER / core.pager / \$PAGER /
@@ -292,7 +322,7 @@ less; GIT_PAGER=cat disables paging)."
 }
 
 function smartstat_usage {
-    print -r -- "usage: $PROG [--color WHEN]
+    print -r -- "usage: $PROG [-C <path>] [--color WHEN]
 
 Show uncommitted working-tree changes as a compact stat block: a summary line
 (\"2 files, +69 -2\") followed by per-file diff bars; loose untracked files are
@@ -302,6 +332,7 @@ D deleted, R renamed, T typechange, S submodule, U unmerged — colored by kind.
 Prints nothing when the working tree is clean. The same block git-smartlog draws.
 
       --color WHEN    colorize output: auto (default), always, or never
+  -C <path>           run as if started in <path>, like git's own -C
   -h, --help          show this help and exit"
 }
 
@@ -516,16 +547,13 @@ function submodule_sublines {
 
     local -a dirty=()
     if [[ -z $commit ]]; then
-        # Diff paths are repo-root-relative, and this script can run from any
-        # subdirectory, so resolve the submodule against the top level. An
+        # $sub is repo-root-relative (that is what `git diff` prints) and the
+        # cwd IS the root — cd_toplevel saw to that — so it resolves as-is. An
         # UNINITIALIZED submodule is an empty directory inside the parent's own
         # worktree, where git would happily report the parent's changes as the
         # submodule's — require the submodule's own .git (gitfile or dir) first.
-        local root= sdir=
-        root=$(git rev-parse --show-toplevel 2>/dev/null)
-        sdir=$root/$sub
-        if [[ -n $root && -e $sdir/.git ]]; then
-            dirty=("${(@f)$(cd -q -- $sdir &&
+        if [[ -e $sub/.git ]]; then
+            dirty=("${(@f)$(cd -q -- $sub &&
                 uncommitted_stat $color_on $(( reserve + ${#lead} + 3 )) &&
                 (( STAT_HAS_CHANGES )) && print -rl -- "${STAT_BODY[@]}")}")
             dirty=(${dirty:#})
@@ -1159,8 +1187,9 @@ function emit_subtree {
 function main {
     # Option parsing (zparseopts is a zsh builtin; -K keeps the ARG_LIMIT default
     # when -n is not passed). Operates on main's own positional params ("$@").
-    local -a ARG_LIMIT=(1) ARG_NO_LIMIT=() ARG_BASE=() ARG_CHANGES=() ARG_ALL_AUTHORS=() ARG_BRANCHES=() ARG_PRS=() ARG_NO_PRS=() ARG_HELP=()
+    local -a ARG_LIMIT=(1) ARG_NO_LIMIT=() ARG_BASE=() ARG_CHANGES=() ARG_ALL_AUTHORS=() ARG_BRANCHES=() ARG_PRS=() ARG_NO_PRS=() ARG_CD=() ARG_HELP=()
     zparseopts -D -E -K -- \
+        C+:=ARG_CD \
         {n,-limit}:=ARG_LIMIT \
         {N,-no-limit}=ARG_NO_LIMIT \
         -base:=ARG_BASE \
@@ -1175,6 +1204,12 @@ function main {
     # -E leaves anything unrecognized (e.g. --bogus) in the positionals; we take no
     # positional args, so treat leftovers as a usage error.
     (( $# )) && { print -ru2 -- "$PROG: unexpected argument: $1"; smartlog_usage >&2; exit 2; }
+    cd_dash_C $ARG_CD
+    # --git-dir, not --is-inside-work-tree: a bare repo has no worktree but its
+    # history still renders (only the uncommitted node needs one). Checked here
+    # so a mistyped -C says so, instead of failing later as a missing trunk.
+    git rev-parse --git-dir >/dev/null 2>&1 || die "not a git repository"
+    cd_toplevel
     # The three view flags are orthogonal: -c adds a change body to every commit
     # in view, -b brings in the other local branches as full stacks, -a stops
     # compacting other authors' public commits. The uncommitted node is not a
@@ -1784,8 +1819,9 @@ function smartstat_main {
     # Standalone entry point (invoked as git-smartstat): print just the uncommitted
     # stat block — a plain summary line followed by the per-file body — or nothing
     # when the working tree is clean. --color WHEN is auto (default), always, never.
-    local -a ARG_COLOR=(auto) ARG_HELP=()
+    local -a ARG_COLOR=(auto) ARG_CD=() ARG_HELP=()
     zparseopts -D -E -K -- \
+        C+:=ARG_CD \
         -color:=ARG_COLOR \
         {h,-help}=ARG_HELP \
         || { smartstat_usage >&2; exit 2; }
@@ -1793,9 +1829,11 @@ function smartstat_main {
     # -E leaves anything unrecognized (e.g. --bogus) in the positionals; we take no
     # positional args, so treat leftovers as a usage error.
     (( $# )) && { print -ru2 -- "$PROG: unexpected argument: $1"; smartstat_usage >&2; exit 2; }
+    cd_dash_C $ARG_CD
 
     git rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
         die "not a git repository"
+    cd_toplevel
 
     # zparseopts keeps the "=" of the --color=WHEN form (--color WHEN gives a bare
     # value), so strip one leading "=" before matching.

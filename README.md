@@ -331,8 +331,12 @@ zstyle ':completion:*:*:git:*' user-commands \
 
 ## Usage
 
+Both commands take `-C <path>`, exactly as git does — run as if started in that
+directory, repeats composing — so you can point them at a repo without leaving
+the one you're in.
+
 ```
-usage: git-smartlog [-c] [-b] [-a] [-p|-P] [-n N] [-N] [--base REV]
+usage: git-smartlog [-C <path>] [-c] [-b] [-a] [-p|-P] [-n N] [-N] [--base REV]
 
 Sapling-style smartlog using only git: the current branch's draft stack
 drawn on top of its nearest public (pushed) base. A dirty working tree always
@@ -359,6 +363,8 @@ The three view flags below are independent and combine freely.
                       history below it — lazily when paged — like git log
       --base REV      override the public base (default: nearest remote trunk, e.g.
                       origin/HEAD, origin/main, origin/master, upstream/main)
+  -C <path>           run as if started in <path>, like git's own -C; repeats
+                      compose, each relative to the last
   -h, --help          show this help and exit
 
 Output taller than the terminal is paged ($GIT_PAGER / core.pager / $PAGER /
@@ -377,9 +383,17 @@ ln -s git-smartlog ~/.local/bin/git-smartstat
 ```
 
 ```
-usage: git-smartstat [--color WHEN]
+usage: git-smartstat [-C <path>] [--color WHEN]
+
+Show uncommitted working-tree changes as a compact stat block: a summary line
+("2 files, +69 -2") followed by per-file diff bars; loose untracked files are
+folded in and wholly-untracked directories collapse to a single entry like git
+status. Each name carries a change marker — A added, ? untracked, M modified,
+D deleted, R renamed, T typechange, S submodule, U unmerged — colored by kind.
+Prints nothing when the working tree is clean. The same block git-smartlog draws.
 
       --color WHEN    colorize output: auto (default), always, or never
+  -C <path>           run as if started in <path>, like git's own -C
   -h, --help          show this help and exit
 ```
 

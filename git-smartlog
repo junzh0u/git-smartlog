@@ -3,14 +3,15 @@
 #
 # Self-contained: a single file depending only on zsh and git, so it can be
 # downloaded and run standalone — no other files from this repo are required. The
-# -u (uncommitted changes) node needs nothing external either: its stat block is
+# uncommitted-changes node needs nothing external either: its stat block is
 # computed by the in-file `uncommitted_stat` function. The one exception is
 # -p/--prs, which shells out to the GitHub CLI (`gh`) — opt-in, and everything
 # else keeps working without gh installed.
 #
 # Multi-call: this same file is also `git-smartstat`. Symlink it under that name
 # (e.g. `ln -s git-smartlog git-smartstat`) and the git-smartstat name runs ONLY
-# the uncommitted-changes stat — the exact body that -u draws — as a standalone
+# the uncommitted-changes stat — the exact body the wdir node draws — as a
+# standalone
 # command (`git smartstat`). Dispatch is on the invocation name ($PROG) at the
 # bottom; both names share `uncommitted_stat`, so there's no duplicated logic.
 #
@@ -23,51 +24,37 @@
 #     its public base. Sapling's smartlog renders EVERY draft branch as its own
 #     stack through a full DAG renderer (renderdag) ordered by an internal
 #     topo-sort; this script deliberately does not — other local branches and
-#     draft heads won't appear by default. Output matches `\sl` exactly when
-#     you're working a single branch (the common case).
-#   - Other branches, compact (opt-in via -b/--branches): every other local
-#     branch joins the graph as a SINGLE node — its head commit — hanging off
-#     its anchor: the nearest shown commit down its chain (a draft of the
-#     current stack, another branch's node, or its trunk fork point), tagged
-#     with a dim "(+N)" count of commits since that anchor; the stack interior
-#     stays hidden (sapling would draw the full stack). A one-commit branch
-#     shows its subject plainly and drops the redundant (+1); a taller one
-#     keeps (+N) and shows its head's subject dimmed — a muted hint of where
-#     the stack ends, visibly not the whole story. -B shows the full stacks.
-#     Public commits jumped over between fork points elide to sapling's dotted
-#     ╷ spine, and a stack or
-#     branch bends ╭─╯ off a dotted-or-empty spine but forks ├─╯ off a solid one,
-#     exactly like sapling. A branch merged into the trunk, or pointing at a
-#     commit already on screen, labels that commit instead of adding a node; a
-#     branch whose same-name remote ref sits at the same commit shows only the
-#     remote name (same rule as the active branch). Each node anchors at the
-#     NEAREST shown commit down its chain — a draft of the current stack (a
-#     branch stacked on top of HEAD anchors at HEAD itself), another branch's
-#     node (stacked branches chain their compact nodes), or its trunk fork
-#     point — so (+N) never counts commits another shown node already covers.
-#     Above its anchor, the newest node continues the anchor's column straight
-#     up (sapling's spine rule); any other bends ├─╯ into that column right
-#     above the anchor.
-#   - Other branches, full (opt-in via -B/--branches-full; implies -b and wins
-#     over it): every other local branch renders its COMPLETE first-parent
-#     stack, sapling-style. All heads' chains union into a forest of draft
-#     trees, so a branch forking from a draft shows as a real fork (no
-#     approximation, no "(+N)"), and commits stacked ABOVE HEAD — a branch
-#     containing HEAD while you're checked out mid-stack — appear too, with @
-#     drawn mid-tree. At each fork the spine child (the one on HEAD's path,
-#     else the newest subtree) continues the column; each other child opens a
-#     column one level deeper ("│ o" rows), newest first, closing with a ├─╯
-#     bend right above the fork — the contiguous-chain linearization sapling's
-#     renderdag produces, verified against it. With -u the wdir node draws
-#     directly above HEAD at HEAD's depth. Label and remote-name rules are
-#     shared with -b.
+#     draft heads won't appear by default. On a CLEAN working tree the output
+#     matches `\sl` exactly when you're working a single branch (the common
+#     case); a dirty one always adds the wdir node below.
+#   - Other branches (opt-in via -b/--branches): every other local branch
+#     renders its COMPLETE first-parent stack, sapling-style. All heads' chains
+#     union into a forest of draft trees, so a branch forking from a draft shows
+#     as a real fork, and commits stacked ABOVE HEAD — a branch containing HEAD
+#     while you're checked out mid-stack — appear too, with @ drawn mid-tree. At
+#     each fork the spine child (the one on HEAD's path, else the newest
+#     subtree) continues the column; each other child opens a column one level
+#     deeper ("│ o" rows), newest first, closing with a ├─╯ bend right above the
+#     fork — the contiguous-chain linearization sapling's renderdag produces,
+#     verified against it. A branch merged into the trunk labels that commit
+#     instead of adding a node; a branch whose same-name remote ref sits at the
+#     same commit shows only the remote name (same rule as the active branch).
+#     Public commits jumped over between fork points elide to sapling's dotted ╷
+#     spine, and a tree bends ╭─╯ off a dotted-or-empty spine but forks ├─╯ off a
+#     solid one, exactly like sapling. When the tree is dirty the wdir node draws
+#     directly above HEAD at HEAD's depth.
 #   - Long subjects are shown in full; sapling truncates them to the terminal
 #     width with an ellipsis (so they match in a wide terminal, differ in a narrow
 #     one).
-#   - Optional full headers: with -a/--all-authors, every commit shows its author
-#     and subject — including public commits by other people, which sapling (and
-#     this script by default) render metadata-only. An extension sapling has no
-#     equivalent for; the default still matches sapling exactly.
+#   - Uncommitted changes are always shown: a dirty working tree draws a
+#     synthetic node on top of HEAD (see Format below). Sapling surfaces
+#     working-copy changes differently, so any dirty-tree output diverges from
+#     `\sl` by that node — the idea is borrowed from jj, which treats the
+#     working copy as a commit in its own right.
+#   - Optional full headers: with -a/--all-authors, every commit shows its
+#     author and subject — including public commits by other people, which
+#     sapling (and this script by default) render metadata-only. An extension
+#     sapling has no equivalent for; the default still matches sapling exactly.
 #
 # Layout
 #   - Public base: the nearest public ancestor of HEAD. Candidate trunks are
@@ -81,23 +68,20 @@
 #   - Drafts: first-parent commits in `HEAD ^merge_base`, newest first
 #   - Public window: -n commits starting at base_ref (or merge_base if base
 #     is ahead of HEAD's chain)
-#   - Branch nodes (-b): one node per other local branch, drawn above its fork
-#     point. With -b the public window always anchors at the trunk tip, and the
-#     merge-base plus every branch's fork point are added to it; commits jumped
-#     over between shown publics render as a dotted ╷ spine. A branch forking
-#     from a draft of the current stack draws above that draft instead and adds
-#     nothing to the public window
-#   - Draft trees (-B): all heads' first-parent chains union into trees; each
-#     tree renders above its root's public fork point — spine child straight
-#     up the same column, side subtrees one column deeper per fork level
+#   - Draft trees (-b): all heads' chains union into trees; each tree renders
+#     above its root's public fork point — spine child straight up the same
+#     column, side subtrees one column deeper per fork level. With -b the public
+#     window always anchors at the trunk tip, and the merge-base plus every
+#     tree's fork point are added to it; commits jumped over between shown
+#     publics render as a dotted ╷ spine
 #
 # Format per commit
 #   <symbol>  <hash:10>  <reltime>  <author>  [<refs>]
 #   │  <subject>
 #   │
 #   - Symbol: @ for HEAD, o otherwise
-#   - Uncommitted changes (opt-in via -u/--uncommitted): when the working tree is
-#     dirty, a synthetic "Uncommitted changes" node is drawn on top of HEAD. Its
+#   - Uncommitted changes (always on): when the working tree is dirty, a
+#     synthetic "Uncommitted changes" node is drawn on top of HEAD. Its
 #     header carries compact totals ("2 files, +69 -2"); its body is the per-file
 #     bars from `git diff --stat HEAD`, with the stat's own trailing total dropped
 #     (it lives in the header). Loose untracked files are folded into BOTH the
@@ -118,8 +102,8 @@
 #     A submodule entry (marker S) expands into sub-lines under its stat line,
 #     in two groups of at most 3 lines each, every group closing with a dim
 #     "… +N more" tail when it overflows:
-#       - its own UNCOMMITTED changes (working-tree bodies only — -u, and the
-#         wdir node -c/-C draw): this very stat block, recomputed with the
+#       - its own UNCOMMITTED changes (the wdir node only — a -c commit body
+#         has no working tree): this very stat block, recomputed with the
 #         submodule as cwd, indented one level in — same markers, colors and
 #         bars, and a dirty submodule inside it nests again. Without this a
 #         merely dirty submodule says nothing at all: its sha is unchanged, so
@@ -130,24 +114,23 @@
 #         locally) adds none.
 #     A clean submodule at an unchanged sha isn't in the diff at all; a clean
 #     bump's S line still stands alone if git can't summarize it. Commit bodies
-#     (-c/-C) get the commit group only — a commit has no working tree.
-#   - Commit changes (opt-in via -c/--changes or -C/--changes-all; sapling has no
-#     equivalent): -c implies -u and, when the working tree is CLEAN, draws HEAD's
-#     own per-file stat block (vs its first parent; the empty tree for a root
-#     commit) under HEAD's subject row, closed by a dim "N files, +X -Y" total
-#     line. -C extends that to every draft in the current stack, clean or dirty —
-#     the wdir node still draws on top when there are uncommitted changes — and,
-#     when HEAD sits directly on the trunk (no drafts), covers every public
-#     commit in view instead (pair with -n for history). Bodies
-#     share -u's format, markers and colors ('?'/U can't occur in a committed
-#     diff); an empty commit gets no body.
+#     (-c) get the commit group only — a commit has no working tree.
+#   - Commit changes (opt-in via -c/--changes; sapling has no equivalent): draws
+#     every draft in the current stack its own per-file stat block (vs its first
+#     parent; the empty tree for a root commit) under its subject row, clean or
+#     dirty, closed by a dim "N files, +X -Y" total line — the wdir node still
+#     draws on top when there are uncommitted changes. When HEAD sits directly
+#     on the trunk (no drafts), it covers every public commit in view instead
+#     (pair with -n for history). Bodies share the wdir node's format, markers
+#     and colors ('?'/U can't occur in a committed diff); an empty commit gets
+#     no body.
 #   - Author: %al (email local-part, e.g. "junz")
 #   - Refs: %D filtered to remote bookmarks plus the active local branch, shown
 #     with a trailing "*" like sapling's active bookmark — but only when no remote
 #     branch of the same name exists (else just the remote shows, e.g. master ->
 #     origin/master); inactive local branches and tags are dropped
 #   - PR numbers (opt-in via -p/--prs; needs the GitHub CLI `gh`): every branch
-#     name a row displays — the active branch, a remote bookmark, or a -b/-B
+#     name a row displays — the active branch, a remote bookmark, or a -b
 #     local — whose branch has a GitHub PR gets a trailing "#N" tag after the
 #     refs, colored by PR state (see Colors) and deduped per PR number (a
 #     local+remote pair tags once). On a color-capable TTY the tag is also an
@@ -192,7 +175,7 @@
 #     green, so tags stand apart from green remote refs (and read as links);
 #     draft dim blue (\e[2;34m), merged magenta (\e[35m), closed red (\e[31m).
 #     Each tag is also an OSC 8 hyperlink to its PR when the palette is on
-#   - Uncommitted body (-u): a change marker prefixes each filename; marker and name
+#   - Uncommitted body: a change marker prefixes each filename; marker and name
 #     are colored by kind — A added green (\e[32m), ? untracked dim green (\e[2;32m),
 #     D deleted red (\e[31m), R/C renamed blue (\e[34m), T typechange magenta
 #     (\e[35m), S submodule cyan (\e[36m), U unmerged bold red (\e[1;31m); M modified
@@ -275,25 +258,22 @@ function die {
 }
 
 function smartlog_usage {
-    print -r -- "usage: $PROG [-u] [-c|-C] [-a] [-b|-B] [-p|-P] [-n N] [-N] [--base REV]
+    print -r -- "usage: $PROG [-c] [-b] [-a] [-p|-P] [-n N] [-N] [--base REV]
 
 Sapling-style smartlog using only git: the current branch's draft stack
-drawn on top of its nearest public (pushed) base.
+drawn on top of its nearest public (pushed) base. A dirty working tree always
+draws an \"Uncommitted changes\" node on top of HEAD.
 
-  -u, --uncommitted   show a synthetic node for uncommitted working-tree changes
-  -c, --changes       implies -u; when the working tree is clean, show the HEAD
-                      commit's per-file changes under its node instead
-  -C, --changes-all   show per-file changes under every commit in the current
+The three view flags below are independent and combine freely.
+
+  -c, --changes       show per-file changes under every commit in the current
                       stack — or under every public commit in view when HEAD
-                      sits on the trunk (pair with -n) — plus the uncommitted
-                      node (implies -u; wins over -c)
+                      sits on the trunk (pair with -n)
+  -b, --branches      show every other local branch as its full stack, like
+                      sapling — including forks at draft commits and commits
+                      stacked above HEAD
   -a, --all-authors   show author + subject for every commit, including public
                       commits by other authors (default: those render compact)
-  -b, --branches      show every other local branch as a single node above its
-                      fork point with the trunk, tagged (+N) commits since fork
-  -B, --branches-full show every other local branch as its FULL stack, like
-                      sapling — including forks at draft commits and commits
-                      stacked above HEAD (implies -b; wins when both are given)
   -p, --prs           tag shown branch names that have a GitHub PR with its
                       \"#N\" — colored by PR state, hyperlinked on a TTY
                       (needs the gh CLI); sticky — remembered per repo, so
@@ -319,7 +299,7 @@ Show uncommitted working-tree changes as a compact stat block: a summary line
 folded in and wholly-untracked directories collapse to a single entry like git
 status. Each name carries a change marker — A added, ? untracked, M modified,
 D deleted, R renamed, T typechange, S submodule, U unmerged — colored by kind.
-Prints nothing when the working tree is clean. The same block git-smartlog -u draws.
+Prints nothing when the working tree is clean. The same block git-smartlog draws.
 
       --color WHEN    colorize output: auto (default), always, or never
   -h, --help          show this help and exit"
@@ -527,7 +507,7 @@ function submodule_sublines {
     # the caller reserves ahead of each body line, $4 the commit being stat'd
     # (empty in working-tree mode), $5 submodule path, $6.. the diff endpoints
     # `git diff` ran against ($parent $commit, or the working-tree target) — so
-    # both -c/-C (commit) and -u (worktree) work.
+    # both -c (commit) and the wdir node (worktree) work.
     local lead=$1 color_on=$2 reserve=$3 commit=$4 sub=$5; shift 5
     reply=()
     local dim= reset=
@@ -584,11 +564,11 @@ function uncommitted_stat {
     # STAT_HAS_CHANGES (0/1), STAT_SUMMARY (a plain "N files, +X -Y" string — never
     # colored, the caller styles it) and STAT_BODY (per-file body lines, marked and,
     # when color_on, colored). Reads the working tree only; never mutates the real
-    # index. Shared by `git-smartlog -u` and standalone `git-smartstat`.
+    # index. Shared by git-smartlog's wdir node and standalone `git-smartstat`.
     #
     # $3 (optional) = a commit: stat THAT commit's changes — against its first
     # parent, or the empty tree for a root commit — instead of the working tree
-    # (used by -c/-C). The working-tree machinery below (porcelain, untracked
+    # (used by -c). The working-tree machinery below (porcelain, untracked
     # folding, the index overlay, unmerged detection) all no-ops in this mode;
     # body format, markers, colors and sorting are identical.
     local color_on=$1
@@ -616,7 +596,7 @@ function uncommitted_stat {
             stat_width=$COLUMNS
         fi
         # Shrink the width git is told to use so the assembled line fits the real
-        # terminal: reserve the caller's per-line prefix (the -u node indents the
+        # terminal: reserve the caller's per-line prefix (the wdir node indents the
         # body by "  │ ") plus the 2-column change marker ("? ") this function adds
         # to every git --stat line. Piped output has no terminal to overflow, so it
         # keeps 80.
@@ -932,7 +912,7 @@ function uncommitted_stat {
                     # rendered S line — so the group sort keeps them attached to
                     # it; the flatten pass below splits them back into their own
                     # STAT_BODY lines. STAT_BODY must stay one-line-per-element
-                    # for the -u node consumer, which prefixes each element with
+                    # for the wdir node consumer, which prefixes each element with
                     # its own gutter.
                     if [[ $mark == S ]]; then
                         submodule_sublines "$lead" $color_on $reserve "$commit" "$skey" $diff_args
@@ -1010,7 +990,7 @@ function commit_header {
 
     # -p/--prs: tag the row's shown branch names that have a PR with "#N",
     # colored by PR state. Candidates are REF_BRANCHES from filter_refs (the
-    # active branch, remote bookmarks) plus the -b/-B names attached above.
+    # active branch, remote bookmarks) plus the -b names attached above.
     # The trunk's branch is skipped (its merged PR would tag every base row);
     # dedupe by PR number so a local+remote pair tags once.
     local pr_seg=
@@ -1046,7 +1026,7 @@ function commit_header {
 }
 
 function subtree_epoch {
-    # REPLY = newest commit epoch in the -B draft subtree rooted at $1.
+    # REPLY = newest commit epoch in the -b draft subtree rooted at $1.
     # Memoized in main's sub_epoch assoc (dynamic scoping); used to order
     # sibling subtrees and trees newest-first.
     local c=$1
@@ -1074,7 +1054,7 @@ function draft_subject {
 }
 
 function print_commit_stat {
-    # Print the -c/-C per-file stat body registered for commit $1 (if any)
+    # Print the -c per-file stat body registered for commit $1 (if any)
     # directly under its subject row. $2 = the spine prefix carrying that
     # column downward. Reads main's commit_stats via dynamic scoping; body
     # lines are stored newline-joined (none of them can contain a newline).
@@ -1086,96 +1066,8 @@ function print_commit_stat {
     done
 }
 
-function bnode_epoch {
-    # REPLY = newest commit epoch in the -b node subtree rooted at $1 —
-    # the subtree_epoch analog for compact nodes, memoized in main's
-    # bsub_epoch assoc.
-    local c=$1
-    if [[ -n ${bsub_epoch[$c]:-} ]]; then
-        REPLY=${bsub_epoch[$c]}
-        return
-    fi
-    local best=${epochs[${midx[$c]}]}
-    local k=
-    for k in ${=bkids[$c]:-}; do
-        bnode_epoch $k
-        (( REPLY > best )) && best=$REPLY
-    done
-    bsub_epoch[$c]=$best
-    REPLY=$best
-}
-
-function bnode_order {
-    # reply = the -b branch heads anchored at commit $1 — a draft or another
-    # head (from bkids) — newest subtree first: subtree epoch descending, sha
-    # descending on ties, the same order -B gives sibling side subtrees.
-    # Epochs are fixed-width digit strings, so one lexical descending sort
-    # orders both keys at once.
-    reply=(${=bkids[$1]:-})
-    (( ${#reply} > 1 )) || return 0
-    local -a keyed=()
-    local kh=
-    for kh in $reply; do
-        bnode_epoch $kh
-        keyed+=("$REPLY $kh")
-    done
-    keyed=(${(O)keyed})
-    reply=(${keyed[@]##* })
-}
-
-# A -b compact branch node is a header row over a subject row. A one-commit
-# branch IS its node: plain subject, no redundant (+1). A taller stack keeps
-# the (+N) count and shows its head's subject muted (dim) — a hint of where
-# the stack ends, visibly not the whole story; -B shows it all.
-
-function bnode_header {
-    # Header row for node $1, at gutter $2.
-    local bh=$1 hg=$2
-    local -i idx=${midx[$bh]}
-    if [[ ${bnode_ahead[$bh]} == 1 ]]; then
-        commit_header $idx o "$hg" "$C_DRAFT_HASH" '' 0 ''
-    else
-        commit_header $idx o "$hg" "$C_DRAFT_HASH" '' 0 "  ${C_DIM}(+${bnode_ahead[$bh]})${C_RESET}"
-    fi
-}
-
-function bnode_subject {
-    # Subject row for node $1, behind prefix $2 (the closing join bend, or a
-    # │ continuation when the node sits in-column).
-    local bh=$1 sp=$2
-    local -i idx=${midx[$bh]}
-    if [[ ${bnode_ahead[$bh]} == 1 ]]; then
-        print -r -- "${sp}  ${subjects[idx]}"
-    else
-        print -r -- "${sp}  ${C_DIM}${subjects[idx]}${C_RESET}"
-    fi
-}
-
-function emit_bnode_tree {
-    # Render the -b node tree rooted at head $1: nodes anchored at $1 (bkids)
-    # draw above it — the newest continuing this column straight up, every
-    # other closing a side column with a ├─╯ bend right above $1 — then $1's
-    # own header row. The caller owns $1's subject row (the join bend, or a │
-    # continuation), mirroring emit_subtree's contract. $2 = column prefix.
-    local c=$1 prefix=$2
-    bnode_order $c
-    local -a kids=($reply)
-    local k=
-    if (( ${#kids} )); then
-        emit_bnode_tree ${kids[1]} "$prefix"
-        bnode_subject ${kids[1]} "${prefix}│"
-        print -r -- "${prefix}│"
-        for k in ${kids[2,-1]}; do
-            emit_bnode_tree $k "${prefix}│ "
-            bnode_subject $k "${prefix}├─╯"
-            print -r -- "${prefix}│"
-        done
-    fi
-    bnode_header $c "$prefix"
-}
-
 function emit_subtree {
-    # -B renderer: print the draft subtree rooted at $1 top-down, ending with
+    # -b renderer: print the draft subtree rooted at $1 top-down, ending with
     # $1's header row. The caller owns $1's subject row — a "│  subject"
     # continuation when $1 sits under another draft, or the join bend when $1
     # closes a column. $2 is the row prefix of this subtree's column (the trunk
@@ -1232,7 +1124,7 @@ function emit_subtree {
             draft_subject $k
             # Same in-column rule as the stack's bottom draft: a stat body
             # (and then its subject too) stays in the side column, closed by
-            # a bare ├─╯ bend. (Unreachable while -C scopes to the current
+            # a bare ├─╯ bend. (Unreachable while -a scopes to the current
             # branch — side subtrees are never on HEAD's path.)
             if [[ -n ${commit_stats[$k]:-} ]]; then
                 print -r -- "${prefix}│ │${REPLY}"
@@ -1244,7 +1136,7 @@ function emit_subtree {
             print -r -- "${prefix}│"
         done
     fi
-    # The wdir node draws directly above HEAD, at HEAD's depth — with -B the @
+    # The wdir node draws directly above HEAD, at HEAD's depth — with -b the @
     # can sit mid-tree, under stacked branches.
     if (( has_changes )) && [[ $c == $head_sha ]]; then
         local wdir_text_reset=
@@ -1267,17 +1159,14 @@ function emit_subtree {
 function main {
     # Option parsing (zparseopts is a zsh builtin; -K keeps the ARG_LIMIT default
     # when -n is not passed). Operates on main's own positional params ("$@").
-    local -a ARG_LIMIT=(1) ARG_NO_LIMIT=() ARG_BASE=() ARG_UNCOMMITTED=() ARG_CHANGES=() ARG_CHANGES_ALL=() ARG_ALL_AUTHORS=() ARG_BRANCHES=() ARG_BRANCHES_FULL=() ARG_PRS=() ARG_NO_PRS=() ARG_HELP=()
+    local -a ARG_LIMIT=(1) ARG_NO_LIMIT=() ARG_BASE=() ARG_CHANGES=() ARG_ALL_AUTHORS=() ARG_BRANCHES=() ARG_PRS=() ARG_NO_PRS=() ARG_HELP=()
     zparseopts -D -E -K -- \
         {n,-limit}:=ARG_LIMIT \
         {N,-no-limit}=ARG_NO_LIMIT \
         -base:=ARG_BASE \
-        {u,-uncommitted}=ARG_UNCOMMITTED \
         {c,-changes}=ARG_CHANGES \
-        {C,-changes-all}=ARG_CHANGES_ALL \
         {a,-all-authors}=ARG_ALL_AUTHORS \
         {b,-branches}=ARG_BRANCHES \
-        {B,-branches-full}=ARG_BRANCHES_FULL \
         {p,-prs}=ARG_PRS \
         {P,-no-prs}=ARG_NO_PRS \
         {h,-help}=ARG_HELP \
@@ -1286,15 +1175,16 @@ function main {
     # -E leaves anything unrecognized (e.g. --bogus) in the positionals; we take no
     # positional args, so treat leftovers as a usage error.
     (( $# )) && { print -ru2 -- "$PROG: unexpected argument: $1"; smartlog_usage >&2; exit 2; }
+    # The three view flags are orthogonal: -c adds a change body to every commit
+    # in view, -b brings in the other local branches as full stacks, -a stops
+    # compacting other authors' public commits. The uncommitted node is not a
+    # flag at all — it draws whenever the working tree is dirty.
+    local show_changes=0
+    (( ${#ARG_CHANGES} )) && show_changes=1
+    local show_branches=0
+    (( ${#ARG_BRANCHES} )) && show_branches=1
     local all_authors=0
     (( ${#ARG_ALL_AUTHORS} )) && all_authors=1
-    local full_branches=0
-    (( ${#ARG_BRANCHES_FULL} )) && full_branches=1
-    local show_branches=$full_branches
-    (( ${#ARG_BRANCHES} )) && show_branches=1
-    local show_changes=0 show_changes_all=0
-    (( ${#ARG_CHANGES} )) && show_changes=1
-    (( ${#ARG_CHANGES_ALL} )) && show_changes_all=1
     local no_limit=0
     (( ${#ARG_NO_LIMIT} )) && no_limit=1
     # -p is sticky per repo: an explicit -p drops a marker file in the git dir
@@ -1436,12 +1326,10 @@ function main {
 
     local has_changes=0 wdir_summary=
     local -a wdir_stat
-    if (( ${#ARG_UNCOMMITTED} || show_changes || show_changes_all )); then
-        uncommitted_stat $color_on 4   # body lines are indented "  │ " in the node
-        has_changes=$STAT_HAS_CHANGES
-        wdir_summary=$STAT_SUMMARY
-        wdir_stat=("${STAT_BODY[@]}")
-    fi
+    uncommitted_stat $color_on 4       # body lines are indented "  │ " in the node
+    has_changes=$STAT_HAS_CHANGES
+    wdir_summary=$STAT_SUMMARY
+    wdir_stat=("${STAT_BODY[@]}")
 
     local -a drafts
     if [[ $head_sha != $merge_base ]]; then
@@ -1449,17 +1337,14 @@ function main {
     fi
 
     # -b/--branches: collect every other local branch. A branch merged into the
-    # trunk, or pointing at a commit already in the current stack, just labels
-    # that commit (attach_names); anything else becomes a single node above its
-    # anchor — the nearest shown commit down its chain: a draft of the current
-    # stack or another branch's node (bkids), else its fork point with the
-    # trunk (bnodes_at) — the stack interior stays hidden. A branch whose
-    # same-name remote ref sits at the same commit keeps its local name hidden,
-    # mirroring the ACTIVE_BRANCH rule above (the remote ref, which %D still
-    # carries, already identifies it).
-    local -A attach_names bnodes_at bnode_ahead bkids cand_fork
-    local -a bnode_heads=() cand_heads=() extra_publics=()
-    # -B forest: every draft commit reachable first-parent from any head, its
+    # trunk just labels its public commit (attach_names); every other one is
+    # queued for the draft forest below, which renders its complete stack. A
+    # branch whose same-name remote ref sits at the same commit keeps its local
+    # name hidden, mirroring the ACTIVE_BRANCH rule above (the remote ref, which
+    # %D still carries, already identifies it).
+    local -A attach_names
+    local -a extra_publics=()
+    # The forest: every draft commit reachable first-parent from any head, its
     # first parent, its draft children, and the tree roots grouped by the public
     # commit they hang off.
     local -A in_draft first_parent tree_kids roots_at
@@ -1473,7 +1358,7 @@ function main {
             [[ -n $rn ]] && remote_tip[$rn]=$rs
         done < <(git for-each-ref --format='%(refname:short) %(objectname)' refs/remotes 2>/dev/null)
 
-        local bname= bhead= fork= ahead= rk= name_hidden=
+        local bname= bhead= fork= rk= name_hidden=
         while read -r bname bhead; do
             [[ -z $bname || $bname == "$cur_branch" ]] && continue
             fork=$(git merge-base "$bhead" "$base_ref" 2>/dev/null) || continue
@@ -1490,75 +1375,22 @@ function main {
                 extra_publics+=("$fork")
                 continue
             fi
-            if (( full_branches )); then
-                # -B: the head commit itself will be on screen — its name always
-                # attaches; queue the chain for the forest built below.
-                (( name_hidden )) || attach_names[$bhead]+="$bname "
-                bfull_heads+=("$bhead")
-                bfull_forks+=("$fork")
-                continue
-            fi
-            if (( ${drafts[(Ie)$bhead]} )); then
-                # points at a commit already in the current stack: label it
-                (( name_hidden )) || attach_names[$bhead]+="$bname "
-                continue
-            fi
-            # Candidate for a compact node. Anchoring is resolved after the
-            # scan, once every head is known — a branch can stack on another
-            # branch's node. Two branches on the same head share one node
-            # (both names attach).
-            if [[ -z ${cand_fork[$bhead]} ]]; then
-                cand_fork[$bhead]=$fork
-                cand_heads+=("$bhead")
-            fi
+            # The head commit itself will be on screen — its name always
+            # attaches; queue the chain for the forest built below.
             (( name_hidden )) || attach_names[$bhead]+="$bname "
+            bfull_heads+=("$bhead")
+            bfull_forks+=("$fork")
         done < <(git for-each-ref --format='%(refname:short) %(objectname)' refs/heads 2>/dev/null)
-
-        # Anchor each candidate node at the NEAREST shown commit down its
-        # chain: a draft of the current stack (a branch stacked on top of
-        # HEAD anchors at HEAD itself), another candidate's head (stacked
-        # branches chain their compact nodes), or — the fallback — its fork
-        # point with the trunk. Nearest = fewest own commits past the anchor,
-        # so (+N) never counts commits another shown node already covers; a
-        # draft or head anchor is already on screen, so only trunk-anchored
-        # nodes join the public window.
-        local ca= cb= mb= anchor=
-        local -i best=0
-        for ca in $cand_heads; do
-            fork=${cand_fork[$ca]}
-            anchor=$fork
-            best=$(git rev-list --count "$ca" "^$fork" 2>/dev/null)
-            mb=$(git merge-base "$ca" HEAD 2>/dev/null)
-            if [[ -n $mb ]] && (( ${drafts[(Ie)$mb]} )); then
-                ahead=$(git rev-list --count "$ca" "^$mb" 2>/dev/null)
-                (( ahead < best )) && { anchor=$mb; best=$ahead; }
-            fi
-            for cb in $cand_heads; do
-                [[ $cb == $ca ]] && continue
-                mb=$(git merge-base "$ca" "$cb" 2>/dev/null)
-                [[ $mb == $cb ]] || continue   # cb's head is an ancestor of ca's
-                ahead=$(git rev-list --count "$ca" "^$cb" 2>/dev/null)
-                (( ahead < best )) && { anchor=$cb; best=$ahead; }
-            done
-            if [[ $anchor == $fork ]]; then
-                bnodes_at[$fork]+="$ca "
-                extra_publics+=("$fork")
-            else
-                bkids[$anchor]+="$ca "
-            fi
-            bnode_ahead[$ca]=$best
-            bnode_heads+=("$ca")
-        done
     fi
 
-    # -B: union every head's first-parent chain into a forest. Shared prefixes
+    # Union every head's first-parent chain into a forest. Shared prefixes
     # dedup via in_draft (a chain stops as soon as it meets a known commit), so
     # branches forking from a draft — or containing HEAD, i.e. stacked above it —
     # come out as one tree with fork nodes, exactly what sapling renders. Each
     # tree's root hangs off the public commit its first parent points at (which
     # joins the shown publics); HEAD's own chain is walked first so the tree
     # containing HEAD prefers its path as the spine.
-    if (( full_branches )); then
+    if (( show_branches )); then
         local -a fheads=("$head_sha" $bfull_heads) fforks=("$merge_base" $bfull_forks)
         local -i fx=0
         local fline=
@@ -1641,21 +1473,17 @@ function main {
         C_PR_CLOSED=$'\e[31m'   # closed — red
     fi
 
-    # -c/-C: per-commit stat bodies, drawn under the owning commit's subject
-    # row by print_commit_stat. -c covers HEAD alone, and only when the working
-    # tree is clean (a dirty tree already shows its changes in the wdir node);
-    # -C covers every draft in the current stack regardless — or, when HEAD
-    # sits directly on the trunk (no drafts), every public commit in view (pair
-    # with -n) — with the wdir node still on top when dirty. Each body ends
-    # with a dim "N files, +X -Y" total line (the wdir node carries that total
-    # in its header instead).
+    # -c: per-commit stat bodies, drawn under the owning commit's subject row by
+    # print_commit_stat. It covers every draft in the current stack, clean or
+    # dirty — or, when HEAD sits directly on the trunk (no drafts), every public
+    # commit in view (pair with -n) — with the wdir node still on top when the
+    # tree is dirty. Each body ends with a dim "N files, +X -Y" total line (the
+    # wdir node carries that total in its header instead).
     local -A commit_stats=()
     local -a stat_targets=()
-    if (( show_changes_all )); then
+    if (( show_changes )); then
         stat_targets=($drafts)
         (( ${#stat_targets} )) || stat_targets=($publics)
-    elif (( show_changes && ! has_changes )); then
-        stat_targets=($head_sha)
     fi
     local st_sha=
     for st_sha in $stat_targets; do
@@ -1666,10 +1494,10 @@ function main {
     done
 
     local -a all_shas
-    if (( full_branches )); then
+    if (( show_branches )); then
         all_shas=(${(k)in_draft} "${publics[@]}")
     else
-        all_shas=("${drafts[@]}" "${bnode_heads[@]}" "${publics[@]}")
+        all_shas=("${drafts[@]}" "${publics[@]}")
     fi
     (( ${#all_shas} == 0 )) && die "Nothing to display"
 
@@ -1708,11 +1536,11 @@ function main {
     # branch rows take the matching gutter prefix, and their join row bends
     # ╭─╯ off a dotted-or-empty spine but forks ├─╯ off a solid one — exactly
     # how sapling renders it.
-    # -B: mark HEAD's first-parent path (spine preference), find HEAD's tree
+    # -b: mark HEAD's first-parent path (spine preference), find HEAD's tree
     # root, and memoize per-subtree newest epochs for ordering.
-    local -A on_head_path sub_epoch bsub_epoch
+    local -A on_head_path sub_epoch
     local head_root=
-    if (( full_branches )) && [[ -n ${in_draft[$head_sha]} ]]; then
+    if (( show_branches )) && [[ -n ${in_draft[$head_sha]} ]]; then
         head_root=$head_sha
         on_head_path[$head_root]=1
         while [[ -n ${first_parent[$head_root]} && -n ${in_draft[${first_parent[$head_root]}]} ]]; do
@@ -1724,7 +1552,7 @@ function main {
     local -a plan=()
     local pp= bh=
     for pp in $publics; do
-        if (( full_branches )); then
+        if (( show_branches )); then
             # wdir-only pseudo-stack when HEAD sits on a public commit
             [[ $pp == $merge_base && -z $head_root ]] && (( has_changes )) && plan+=(stack)
             # Trees hanging off this public: HEAD's tree first (topmost, like
@@ -1753,9 +1581,6 @@ function main {
             done
         else
             [[ $pp == $merge_base ]] && plan+=(stack)
-            for bh in ${=bnodes_at[$pp]:-}; do
-                plan+=("branch:$bh")
-            done
         fi
         plan+=("public:$pp")
     done
@@ -1777,8 +1602,7 @@ function render_plan {
     # truncation marker, or the first spine row of the -N streamed-history
     # tail), which main appends. Reads main's plan/metadata/C_* state via
     # dynamic scoping, like the other render helpers.
-    local spine= el= g= join= symbol= text_color= subject_body= seg= pp= bh= dbh=
-    local -a dbn=()
+    local spine= el= g= join= symbol= text_color= subject_body= seg= pp= bh=
     local -i pl_i=0 pub_i=0 n_plan=${#plan} idx=0 di=0
     local is_compact=0
     for ((pl_i = 1; pl_i <= n_plan; pl_i++)); do
@@ -1788,27 +1612,6 @@ function render_plan {
 
         case $el in
         (stack)
-            # Branch-node trees anchored at a draft of the stack (bkids) draw
-            # above their fork draft. At the TOP draft the newest one continues
-            # the stack column straight up — sapling's spine rule — and any
-            # other opens a side column closing with a ├─╯ bend right above
-            # the wdir node / HEAD. (Mid-stack forks are all side columns —
-            # the next draft up owns the column — handled in the loop below.)
-            dbn=()
-            if (( n_drafts )); then
-                bnode_order ${drafts[1]}
-                dbn=($reply)
-            fi
-            if (( ${#dbn} )); then
-                emit_bnode_tree ${dbn[1]} "$g"
-                bnode_subject ${dbn[1]} "${g}│"
-                print -r -- "${g}│"
-                for dbh in ${dbn[2,-1]}; do
-                    emit_bnode_tree $dbh "${g}│ "
-                    bnode_subject $dbh "${g}├─╯"
-                    print -r -- "${g}│"
-                done
-            fi
             # Synthetic wdir node, drawn above the stack: @ marker, draft-colored
             # label, the change summary in HEAD-text color. It connects straight
             # down into the draft column when HEAD is a draft, otherwise it bends
@@ -1833,16 +1636,6 @@ function render_plan {
                 fi
             fi
             for ((di = 1; di <= n_drafts; di++)); do
-                if (( di > 1 )); then
-                    # Side columns for branches forking at this mid-stack
-                    # draft, closing right above it.
-                    bnode_order ${drafts[di]}
-                    for dbh in $reply; do
-                        emit_bnode_tree $dbh "${g}│ "
-                        bnode_subject $dbh "${g}├─╯"
-                        print -r -- "${g}│"
-                    done
-                fi
                 idx=${midx[${drafts[di]}]}
                 symbol=o
                 text_color=
@@ -1878,7 +1671,7 @@ function render_plan {
             done
             ;;
         (tree:*)
-            # -B: a full draft tree above its fork-point public commit.
+            # -b: a full draft tree above its fork-point public commit.
             bh=${el#tree:}
             emit_subtree $bh "$g"
             draft_subject $bh
@@ -1892,13 +1685,6 @@ function render_plan {
             else
                 print -r -- "${join}${REPLY}"
             fi
-            print -r -- "│"
-            spine='│'
-            ;;
-        (branch:*)
-            bh=${el#branch:}
-            emit_bnode_tree $bh "$g"
-            bnode_subject $bh "$join"
             print -r -- "│"
             spine='│'
             ;;
@@ -1953,7 +1739,7 @@ function stream_public_tail {
     # scrolling keeps revealing older commits like plain `git log`, and a
     # pager quit kills the walk via SIGPIPE. Piped, the full history streams
     # out, also like `git log`. Rendering matches the planned public rows:
-    # same compact-header rule, refs, and -C stat bodies when publics are the
+    # same compact-header rule, refs, and -a stat bodies when publics are the
     # stat targets (computed lazily, one commit at a time). Metadata appends
     # to main's arrays via dynamic scoping. Ends with "~" only at the root
     # commit; tformat (not format) terminates the last record with a newline
@@ -1974,7 +1760,7 @@ function stream_public_tail {
         # HEAD (HEAD sits at or above the merge-base, always in the window).
         is_compact=0
         (( ! all_authors )) && [[ $ae != $my_email ]] && is_compact=1
-        if (( show_changes_all && ! n_drafts )); then
+        if (( show_changes && ! n_drafts )); then
             uncommitted_stat $color_on 4 $fsha
             if (( STAT_HAS_CHANGES )); then
                 local -a st_body=("${STAT_BODY[@]}" " ${C_DIM}${STAT_SUMMARY}${C_RESET}")

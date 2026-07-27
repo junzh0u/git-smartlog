@@ -7,16 +7,17 @@ self-contained zsh script. The same file doubles as
 It renders the current branch's **draft stack** — the first-parent chain of your
 local (unpushed) commits — drawn on top of its nearest **public** (pushed) base,
 with relative timestamps, authors, and ref decorations, closely mirroring the
-output of Sapling's `sl`. Three opt-in extensions depart from that mirror: `-u`
-adds an uncommitted-changes node, `-c`/`-C` draw per-file change stats under
-your commits, and `-b`/`-B` fold your other local branches into the graph — see
-below.
+output of Sapling's `sl`. Four things depart from that mirror: a dirty working
+tree always draws an uncommitted-changes node, and three independent flags —
+`-c` for per-file change stats under your commits, `-b` to fold your other local
+branches into the graph as full stacks, `-a` to stop compacting other people's
+public commits — combine freely on top. See below.
 
 The story behind it is in
 [this post](https://junz.info/writing/git-smartlog/).
 
 <p align="center">
-  <img src="screenshots/cover.png" alt="git-smartlog -u -n 2 -B -a -p output" width="600">
+  <img src="screenshots/cover.png" alt="git-smartlog -n 2 -b -a -p output" width="600">
 </p>
 
 ## Example
@@ -72,8 +73,8 @@ o  80cf810025  Monday at 09:47
 ~
 ```
 
-With `-u` / `--uncommitted`, a synthetic **Uncommitted changes** node is drawn on
-top of `HEAD` whenever the working tree is dirty: compact totals in the header,
+A synthetic **Uncommitted changes** node is drawn on top of `HEAD` whenever the
+working tree is dirty — no flag needed: compact totals in the header,
 per-file `git diff --stat HEAD` bars in the body. Loose untracked files are folded
 into both (as new-file additions) via a throwaway index overlay, so they appear
 without touching the real index; a **wholly-untracked directory collapses to a
@@ -114,7 +115,7 @@ git-smartlog extension with no Sapling equivalent, so the output no longer mirro
 `sl` (see [Differences](#differences-from-saplings-sl)):
 
 ```text
-$ git smartlog -u -n 2
+$ git smartlog -n 2
   @  Uncommitted changes  10 files, +30 -13
   │  A metrics.go           | 7 +++++++
   │  ? retry_test.go        | 9 +++++++++
@@ -150,18 +151,16 @@ o  a21fc72b55  Tuesday at 09:47
 ~
 ```
 
-With `-c` / `--changes` (implies `-u`), the same per-file stat block attaches to
-**`HEAD` itself** whenever the working tree is clean — so you always see *some*
-changes: the uncommitted ones when dirty, `HEAD`'s own (against its first parent)
-when not. `-C` / `--changes-all` goes further and draws the block under **every
-commit in the current stack**, clean or dirty, with the uncommitted node still on
-top; sitting directly on the trunk (no stack), it covers **every public commit in
-view** instead — pair it with `-n` to review recent history. Bodies share `-u`'s
-markers, colors, and grouping, and close with a dim
-`N files, +X -Y` total line (the wdir node keeps its total in the header):
+With `-c` / `--changes`, that same per-file stat block attaches to **every commit
+in the current stack**, clean or dirty (against each commit's first parent), with
+the uncommitted node still on top; sitting directly on the trunk (no stack), it
+covers **every public commit in view** instead — pair it with `-n` to review
+recent history. Bodies share the uncommitted node's markers, colors, and
+grouping, and close with a dim `N files, +X -Y` total line (that node keeps its
+total in the header):
 
 ```text
-$ git smartlog -C
+$ git smartlog -c
   @  Uncommitted changes  1 file, +9 -0
   │  ? retry_test.go | 9 +++++++++
   │
@@ -182,89 +181,22 @@ o  c7283c280b  Wednesday at 09:47  junz  origin/master
 ~
 ```
 
-With `-b` / `--branches`, every **other local branch** joins the graph too — as
-a single node hanging off its anchor, tagged with a dim `(+N)` count of commits
-since that anchor. The anchor is the nearest shown commit down the branch's
-chain: a **draft of the current stack** (a branch stacked on top of `HEAD`
-anchors at `HEAD` itself), **another branch's node** (stacked branches chain
-their compact nodes), or — the fallback — its fork point with the trunk. Above
-its anchor, the newest node continues the anchor's column straight up, any
-other bends `├─╯` into that column right above the anchor, so `(+N)` never
-counts commits another shown node already covers. A one-commit branch shows its subject plainly
-and drops the redundant `(+1)`; a taller one keeps `(+N)` and shows its head's
-subject dimmed — a muted hint of where the stack ends. Branch names render
+With `-b` / `--branches`, every **other local branch** joins the graph too, each
+rendering its **complete stack**, exactly as Sapling draws it. All heads' chains
+union into a forest, so a branch **forking from a draft commit** shows as a real
+fork, and commits **stacked above `HEAD`** — a branch containing `HEAD` while
+you're checked out mid-stack — appear too, with `@` drawn mid-tree. Fork points
+join the public column no matter how far down they sit, and commits skipped
+between them elide to Sapling's dotted `╷` spine. Two rules keep the graph
+quiet: a branch merged into the trunk just labels that commit instead of adding
+a node (`prod` below), and a branch whose same-name remote ref sits at the same
+commit shows only the remote name (`origin/hotfix`). Branch names render
 **cyan**, so they stand apart from green remote refs and the yellow active
-branch. Fork points are added to the public column no matter how far down they
-sit; commits skipped between them elide to Sapling's dotted `╷` spine — the
-dotted run below `origin/master` here. Two more rules keep the graph quiet: a branch
-pointing at a commit already on screen just labels that commit instead of adding
-a node (`wip/backoff` on a draft below, `prod` on a public commit), and a branch
-whose same-name remote ref sits at the same commit shows only the remote name
-(`origin/hotfix`). Everything composes with `-u` and `-n`:
+branch. Everything composes with `-c`, `-n`, and the `-a` used here to give
+Alice's public commits their full headers:
 
 ```text
-$ git smartlog -u -b
-  @  Uncommitted changes  10 files, +30 -13
-  │  A metrics.go           | 7 +++++++
-  │  ? retry_test.go        | 9 +++++++++
-  │  M http_client.go       | 2 +-
-  │  M retry.go             | 8 +++++++-
-  │  M scripts/release.sh   | 0 +x
-  │  D legacy.go            | 6 ------
-  │  R logging.go => log.go | 0
-  │  T config.json          | 5 +----
-  │  S vendor/timeutil      | 2 +-
-  │      ? clock.go    | 1 +
-  │      M timeutil.go | 2 ++
-  │      › v1.5.0
-  │      › v1.4.0
-  │      › v1.3.0
-  │      … +2 more
-  │  U version.go           | 4 ++++
-  │
-  o  498df929d5  Today at 09:33  junz  feat/retry-backoff*
-  │  Wire backoff into the HTTP client
-  │
-  o  ba482d2f0b  Today at 06:47  junz  wip/backoff
-  │  Add exponential backoff with jitter
-  │
-  o  fa8075adfb  Yesterday at 09:47  junz
-╭─╯  Extract retry policy into its own module
-│
-│ o  0f9c309236  Thursday at 09:47  junz  origin/hotfix
-├─╯  Patch release 0.1.1
-│
-o  c7283c280b  Wednesday at 09:47  junz  origin/master
-╷  Bump dependencies
-╷
-╷ o  f6211c4f36  Yesterday at 08:47  junz  fix/redirect-loop  (+2)
-╭─╯  Abort redirect loops via CheckRedirect
-│
-o  80cf810025  Monday at 09:47  prod
-│
-~
-```
-
-With `-p` / `--prs` (needs the [GitHub CLI](https://cli.github.com/)), every
-branch name shown on a commit that has a GitHub PR gets a trailing `#N` tag —
-blue for open, dim blue for draft, magenta for merged, red for closed — and,
-on a TTY, an OSC 8 hyperlink to the PR. The flag is sticky per repo: once
-passed, later runs keep tagging without it until `-P` / `--no-prs` turns it
-off. The cover image up top shows the tags in all four states on the `-B`
-view.
-
-`-B` / `--branches-full` goes all the way: every other local branch renders its
-**complete stack** instead of a single `(+N)` node, matching what Sapling itself
-draws. All heads' chains union into a forest, so a branch **forking from a draft
-commit** shows as a real fork, and commits **stacked above `HEAD`** — a branch
-containing `HEAD` while you're checked out mid-stack — appear too, with `@` drawn
-mid-tree. On the same repo as above — `origin/hotfix` and `fix/redirect-loop`
-now show their complete stacks, and with `-a` the public commits by other authors
-get their full headers too. This — plus `-p`'s PR tags — is the cover image up
-top:
-
-```text
-$ git smartlog -u -n 2 -B -a
+$ git smartlog -n 2 -b -a
   @  Uncommitted changes  10 files, +30 -13
   │  A metrics.go           | 7 +++++++
   │  ? retry_test.go        | 9 +++++++++
@@ -317,7 +249,7 @@ continues the column and every other child opens a column one level deeper,
 newest first, closing with a `├─╯` bend right above the fork:
 
 ```text
-$ git smartlog -B
+$ git smartlog -b
   @  65782fe20b  Thursday at 13:00  junz  stack-z*
   │  stack-z: z1
   │
@@ -341,8 +273,16 @@ o  5db4e75a60  Wednesday at 10:00  junz  origin/master
 Here `stack-y` forks from a draft (`shared: s1`) and `stack-z` forks from a draft
 of `stack-y` — the layouts Sapling's renderdag produces for the same topology,
 verified against it. Labels, `╷` elision, and the remote-name rule all work as in
-`-b`; with `-u` the uncommitted node draws directly above `HEAD` wherever it sits
-in the tree.
+`-b`, and a dirty working tree draws its uncommitted node directly above `HEAD`
+wherever it sits in the tree.
+
+With `-p` / `--prs` (needs the [GitHub CLI](https://cli.github.com/)), every
+branch name shown on a commit that has a GitHub PR gets a trailing `#N` tag —
+blue for open, dim blue for draft, magenta for merged, red for closed — and,
+on a TTY, an OSC 8 hyperlink to the PR. The flag is sticky per repo: once
+passed, later runs keep tagging without it until `-P` / `--no-prs` turns it
+off. The cover image up top shows the tags in all four states on the `-b`
+view.
 
 In a real terminal the output is colorized — draft hashes in bold yellow,
 `HEAD`'s line in magenta, remote refs in green, `-b` branch names in cyan. ANSI is suppressed when stdout
@@ -354,7 +294,8 @@ isn't a TTY (as in these captures) or when `NO_COLOR` is set.
 - `git`
 
 That's it. The script sources nothing else, so you can drop it anywhere on your
-`PATH` and run it — `-u` included, since its stat block is computed in-file (see
+`PATH` and run it — the uncommitted node included, since its stat block is
+computed in-file (see
 [git-smartstat](#git-smartstat)). The one opt-in extra is `-p`/`--prs`, which
 needs the [GitHub CLI (`gh`)](https://cli.github.com/); everything else works
 without it.
@@ -391,22 +332,22 @@ zstyle ':completion:*:*:git:*' user-commands \
 ## Usage
 
 ```
-usage: git-smartlog [-u] [-c|-C] [-a] [-b|-B] [-p|-P] [-n N] [-N] [--base REV]
+usage: git-smartlog [-c] [-b] [-a] [-p|-P] [-n N] [-N] [--base REV]
 
-  -u, --uncommitted   show a synthetic node for uncommitted working-tree changes
-  -c, --changes       implies -u; when the working tree is clean, show the HEAD
-                      commit's per-file changes under its node instead
-  -C, --changes-all   show per-file changes under every commit in the current
+Sapling-style smartlog using only git: the current branch's draft stack
+drawn on top of its nearest public (pushed) base. A dirty working tree always
+draws an "Uncommitted changes" node on top of HEAD.
+
+The three view flags below are independent and combine freely.
+
+  -c, --changes       show per-file changes under every commit in the current
                       stack — or under every public commit in view when HEAD
-                      sits on the trunk (pair with -n) — plus the uncommitted
-                      node (implies -u; wins over -c)
+                      sits on the trunk (pair with -n)
+  -b, --branches      show every other local branch as its full stack, like
+                      sapling — including forks at draft commits and commits
+                      stacked above HEAD
   -a, --all-authors   show author + subject for every commit, including public
                       commits by other authors (default: those render compact)
-  -b, --branches      show every other local branch as a single node above its
-                      fork point with the trunk, tagged (+N) commits since fork
-  -B, --branches-full show every other local branch as its FULL stack, like
-                      sapling — including forks at draft commits and commits
-                      stacked above HEAD (implies -b; wins when both are given)
   -p, --prs           tag shown branch names that have a GitHub PR with its
                       "#N" — colored by PR state, hyperlinked on a TTY
                       (needs the gh CLI); sticky — remembered per repo, so
@@ -428,7 +369,7 @@ less; GIT_PAGER=cat disables paging).
 
 The uncommitted-changes block isn't just an add-on to the graph — it's also useful
 on its own. `git-smartlog` is **multi-call**: the same file, invoked under the name
-`git-smartstat`, prints *only* that block (the exact body `-u` draws) as a
+`git-smartstat`, prints *only* that block (the exact body the graph's node draws) as a
 standalone command. Symlink it and you get `git smartstat`:
 
 ```sh
@@ -485,7 +426,7 @@ shorten to a leading `...tail` only when the terminal is too narrow to fit them
 
 It prints nothing when the working tree is clean. Both names share one in-file
 function (`uncommitted_stat`), so there's no duplicated logic and `git-smartlog`
-stays a single self-contained file — `-u` needs nothing external. (Standalone,
+stays a single self-contained file — the node needs nothing external. (Standalone,
 `git-smartstat` also works in a repo with no commits yet, diffing against the
 empty tree so staged and untracked files still show as additions.)
 
@@ -497,15 +438,15 @@ empty tree so staged and untracked files still show as additions.)
   merge-base with `HEAD` is closest to `HEAD` wins. `@{u}` and a local
   `main`/`master` are last-resort fallbacks when no remote trunk exists.
 - **Drafts** — first-parent commits in `HEAD ^base`, newest first.
-- **Uncommitted changes** — with `-u`/`--uncommitted`, when `git status` is
-  non-empty, a synthetic node on top of `HEAD`: compact totals in the header
+- **Uncommitted changes** — whenever `git status` is non-empty, a synthetic
+  node on top of `HEAD`: compact totals in the header
   (`git diff --shortstat`) and per-file `git diff --stat HEAD` bars in the body,
   both computed against a throwaway index overlay that intent-to-adds loose
   untracked files so they're folded in without mutating the repo (a wholly-untracked
   directory instead collapses to one `dir/ | N files` entry, like `git status`).
   Each body filename gets a
   one-letter change marker (`A`/`?`/`M`/`D`/`R`/`T`/`S`/`U`, from `git diff --raw`,
-  plus the porcelain status for conflicts) colored by kind (see the `-u` table
+  plus the porcelain status for conflicts) colored by kind (see the marker table
   above), and a `+x`/`-x` hint on executable-bit flips; the `@`
   marker moves there. This block is computed by the in-file `uncommitted_stat`
   function — the same code the [`git-smartstat`](#git-smartstat) command runs.
@@ -521,13 +462,13 @@ empty tree so staged and untracked files still show as additions.)
   branch merged into the trunk — or pointing at a commit already on screen —
   labels that commit instead of adding a node, and a branch whose same-name
   remote ref sits at the same commit shows only the remote name.
-- **Full stacks** — with `-B`/`--branches-full`, every head's first-parent chain
+- **Full stacks** — with `-b`/`--branches`, every head's first-parent chain
   is unioned into a forest of draft trees (shared prefixes dedup), each rendered
   above its root's public fork point: the spine child continues the column, side
   subtrees open one column deeper per fork level and close with a `├─╯` bend
   above the fork. Includes commits stacked above `HEAD`.
 - **PR numbers** — with `-p`/`--prs`, every branch name shown on a commit (the
-  active branch, a remote bookmark, or a `-b`/`-B` local) that has a GitHub PR
+  active branch, a remote bookmark, or a `-b` local) that has a GitHub PR
   gets a trailing `#N` tag: blue for open, dim blue for draft, magenta for
   merged, red for closed — and, on a color-capable TTY, an OSC 8 hyperlink to
   the PR. One `gh pr list --state all` call maps branches to PRs (a branch with
@@ -561,30 +502,27 @@ empty tree so staged and untracked files still show as additions.)
   a full DAG renderer; this script deliberately does not, so other local branches
   and draft heads won't appear by default. Output matches `sl` exactly when you're
   working a single branch (the common case).
-- **`-b`/`--branches` is an extension.** Other local branches appear as single
-  elided nodes with a `(+N)` commits-since-fork tag, where Sapling would draw
-  each branch's full stack (and has no `(+N)`); branch names are cyan rather than
-  Sapling's green `sl.book`, so local branches read differently from remote refs.
-  A branch forking from a draft of the current stack — or from another branch's
-  node — anchors at that commit with only its own commits counted in `(+N)`:
-  the same forks `-B` draws, elided to one node per branch.
-- **`-B`/`--branches-full` is the parity mode.** Full per-branch stacks with the
-  same contiguous-chain layout Sapling's renderdag produces (verified against
-  it). The remaining differences are ordering heuristics: Sapling sorts by its
-  local revision numbers, which Git doesn't have, so sibling subtrees order by
-  newest commit date and the spine prefers `HEAD`'s path.
+- **`-b`/`--branches` is the parity mode.** Without it only the current stack
+  is drawn, where Sapling always renders every draft branch. With it you get
+  full per-branch stacks in the same contiguous-chain layout Sapling's renderdag
+  produces (verified against it); branch names are cyan rather than Sapling's
+  green `sl.book`, so local branches read differently from remote refs. The
+  remaining differences are ordering heuristics: Sapling sorts by its local
+  revision numbers, which Git doesn't have, so sibling subtrees order by newest
+  commit date and the spine prefers `HEAD`'s path.
 - **Long subjects shown in full.** Sapling truncates them to the terminal width
   with an ellipsis.
-- **`-u` is an extension, not a mirror.** The default output tracks Sapling's `sl`
-  closely, but the `-u`/`--uncommitted` node (with its `git diff --stat` body) has
-  no Sapling equivalent — the idea is borrowed from [Jujutsu](https://github.com/jj-vcs/jj),
-  which treats the working copy as a commit in its own right; Sapling surfaces
-  working-copy changes differently. Treat `-u` as a git-smartlog-only convenience,
-  not a parity feature.
-- **`-c`/`-C` are extensions too.** They reuse `-u`'s stat body for committed
-  changes — `-c` under `HEAD` when the tree is clean, `-C` under every commit in
-  the current stack (or every public commit in view, when sitting on the trunk).
-  Sapling has no equivalent; the default output is unchanged.
+- **The uncommitted node is an extension, not a mirror.** On a clean tree the
+  output tracks Sapling's `sl` closely, but the node (with its `git diff --stat`
+  body) has no Sapling equivalent — the idea is borrowed from
+  [Jujutsu](https://github.com/jj-vcs/jj), which treats the working copy as a
+  commit in its own right; Sapling surfaces working-copy changes differently.
+  Unlike the flags below it is always on, so any dirty-tree output diverges from
+  `sl` by that node.
+- **`-c`/`--changes` is an extension too.** It reuses that stat body for
+  committed changes, under every commit in the current stack (or every public
+  commit in view, when sitting on the trunk). Sapling has no equivalent; the
+  default output is unchanged.
 - **`-a`/`--all-authors` is an extension.** By default, public commits by other
   authors render metadata-only, exactly as Sapling does. `-a` turns that off and
   shows the author and subject for every commit — handy on shared branches where

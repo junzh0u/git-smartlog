@@ -14,7 +14,7 @@
 #                          commit between it and the tip elides to a dotted ╷
 #       prod               parked exactly on a public commit — labels it (cyan)
 #       wip/backoff        points at an interior draft of the stack — labels it
-#   - uncommitted working-tree changes exercising EVERY signal the -u node renders:
+#   - uncommitted working-tree changes exercising EVERY signal the wdir node renders:
 #       A staged-new   ? untracked     M modified    D deleted      R renamed
 #       T typechange   S submodule     U unmerged    plus a +x mode flip
 #     The submodule is both bumped AND left dirty, so its entry expands into both
@@ -467,11 +467,10 @@ Demo repo ready: $DEMO   (left mid-merge to show the U conflict signal)
 
 Screenshot it with:
   cd $DEMO
-  sl                  # alias: git-smartlog -u  (uncommitted node, every signal)
   git smartstat       # just the uncommitted stat block, standalone
-  git-smartlog        # plain draft stack, no uncommitted node
+  git-smartlog        # draft stack + the uncommitted node
   git-smartlog -n 4   # also reveals Alice's compact public nodes
-  git-smartlog -b     # every other local branch: nodes, (+N), labels, ╷ elision
-  git-smartlog -b -u  # branches + the uncommitted node together
-  git-smartlog -B     # full stacks for every branch, sapling-style
+  git-smartlog -a     # ... and un-compacts them
+  git-smartlog -c     # a change body under every commit in the stack
+  git-smartlog -b     # every other local branch as its full stack, ╷ elision
 EOF

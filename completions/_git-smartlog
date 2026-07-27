@@ -23,12 +23,9 @@ _git-smartlog_base() {
 
 _git-smartlog() {
     _arguments -s -S \
-        '(-u --uncommitted)'{-u,--uncommitted}'[show a node for uncommitted working-tree changes]' \
-        '(-c --changes -C --changes-all)'{-c,--changes}'[implies -u; show HEAD'\''s per-file changes when the tree is clean]' \
-        '(-C --changes-all -c --changes)'{-C,--changes-all}'[per-file changes under every commit in view (implies -u)]' \
+        '(-c --changes)'{-c,--changes}'[per-file changes under every commit in view]' \
+        '(-b --branches)'{-b,--branches}'[other local branches as their full stacks, sapling-style]' \
         '(-a --all-authors)'{-a,--all-authors}'[full headers for every commit, incl. other authors'\'' public ones]' \
-        '(-b --branches -B --branches-full)'{-b,--branches}'[other local branches as single nodes above their fork points]' \
-        '(-B --branches-full -b --branches)'{-B,--branches-full}'[other local branches as full stacks (implies -b)]' \
         '(-p --prs -P --no-prs)'{-p,--prs}'[tag shown branch names with their GitHub PR number (needs gh); sticky per repo]' \
         '(-P --no-prs -p --prs)'{-P,--no-prs}'[turn PR tagging off and forget the remembered -p]' \
         '(-n --limit)'{-n+,--limit=}'[public commits to show, incl. merge-base (default 1)]:count' \

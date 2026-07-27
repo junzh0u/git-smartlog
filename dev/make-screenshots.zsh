@@ -1,9 +1,9 @@
-#!/usr/bin/env bash
+#!/usr/bin/env zsh
 # Regenerate the README screenshots (cover.png, smartstat.png) end to end:
 #
-#   ./make-screenshots.sh [demo-dir]      # default: /tmp/git-smartlog-demo
+#   ./dev/make-screenshots.zsh [demo-dir]      # default: /tmp/git-smartlog-demo
 #
-# 1. Rebuilds the demo repo with make-demo.sh (commit dates anchor to "now",
+# 1. Rebuilds the demo repo with make-demo.zsh (commit dates anchor to "now",
 #    so relative times render nicely).
 # 2. Runs each command on a pty (`script -q`) so git-smartlog sees a TTY and
 #    colorizes; GIT_PAGER=cat keeps the pager out of the capture.
@@ -17,7 +17,7 @@
 # Needs: zsh, python3, and Chrome/Chromium (override the binary with $CHROME).
 set -euo pipefail
 
-REPO=$(cd "$(dirname "$0")" && pwd)
+REPO=$(cd "$(dirname "$0")/.." && pwd)
 OUT=$REPO/screenshots
 DEMO=${1:-/tmp/git-smartlog-demo}
 TMP=$(mktemp -d)
@@ -33,7 +33,7 @@ if [[ -z $CHROME ]]; then
 fi
 [[ -n $CHROME ]] || { echo "error: Chrome not found; set \$CHROME" >&2; exit 1; }
 
-"$REPO/make-demo.sh" "$DEMO" >/dev/null
+"$REPO/dev/make-demo.zsh" "$DEMO" >/dev/null
 echo "demo repo rebuilt: $DEMO"
 
 # Stub `gh` for the cover shot's -p/--prs tags: the demo repo's remote is a

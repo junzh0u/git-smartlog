@@ -1,8 +1,8 @@
-#!/usr/bin/env bash
+#!/usr/bin/env zsh
 # Build a throwaway demo git repo for screenshotting git-smartlog / git-smartstat
 # (e.g. a README cover image). Re-runnable: wipes and recreates the target each time.
 #
-#   ./make-demo.sh [target-dir]        # default: /tmp/git-smartlog-demo
+#   ./dev/make-demo.zsh [target-dir]        # default: /tmp/git-smartlog-demo
 #
 # It lays out a small HTTP-client project with:
 #   - a public base on origin/master (two compact commits by someone else, one by you)

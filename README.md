@@ -25,6 +25,7 @@ The story behind it is in
 On a feature branch with a few local commits stacked on `origin/master`, with a
 clean working tree:
 
+<!-- fixture: demo-clean -->
 ```text
 $ git smartlog
   @  e6152ce8e3  14 minutes ago  junz  feat/retry-backoff*
@@ -53,6 +54,7 @@ render metadata-only (no author, no subject), exactly as Sapling does — see
 off and show the author and subject for every commit, including other people's
 public ones:
 
+<!-- fixture: demo-clean -->
 ```text
 $ git smartlog -n 4
   @  e6152ce8e3  14 minutes ago  junz  feat/retry-backoff*
@@ -116,6 +118,7 @@ copy is — and `HEAD` drops to an `o` (keeping its author and subject). This is
 git-smartlog extension with no Sapling equivalent, so the output no longer mirrors
 `sl` (see [Differences](#differences-from-saplings-sl)):
 
+<!-- fixture: demo -->
 ```text
 $ git smartlog -n 2
   @  Uncommitted changes  11 files, +30 -13
@@ -162,6 +165,7 @@ recent history. Bodies share the uncommitted node's markers, colors, and
 grouping, and close with a dim `N files, +X -Y` total line (that node keeps its
 total in the header):
 
+<!-- fixture: demo -->
 ```text
 $ git smartlog -c
   @  Uncommitted changes  11 files, +30 -13
@@ -221,6 +225,7 @@ commit shows only the remote name (`origin/hotfix`). Branch names render
 branch. Everything composes with `-c`, `-n`, and the `-a` used here to give
 Alice's public commits their full headers:
 
+<!-- fixture: demo -->
 ```text
 $ git smartlog -n 2 -b -a
   @  Uncommitted changes  11 files, +30 -13
@@ -285,6 +290,7 @@ continues the column and every other child opens a column one level deeper,
 newest first, closing with a `├─╯` bend right above the fork. Narrow the public
 window back to the default and the elision shows up too:
 
+<!-- fixture: demo -->
 ```text
 $ git smartlog -b
   @  Uncommitted changes  11 files, +30 -13
@@ -470,6 +476,7 @@ Prints nothing when the working tree is clean. The same block git-smartlog draws
   -h, --help          show this help and exit
 ```
 
+<!-- fixture: demo -->
 ```text
 $ git smartstat
 11 files, +30 -13

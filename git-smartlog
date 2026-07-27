@@ -115,11 +115,22 @@
 #     in that order (A ? M D R T S U), alphabetical within each group. The @ marker
 #     moves to the node — that's where the working copy is — and HEAD drops to o
 #     (keeps author/subject).
-#     A submodule bump (marker S) expands: its "git diff --submodule=log" commit
-#     subjects render as dim sub-lines under its stat line, newest first, capped
-#     at 3 with a "… +N more" tail; a commit gained is prefixed "›", one lost (a
-#     rewind) "‹". A bump git can't summarize (commits not present locally) adds
-#     no sub-lines — its bare S line stands alone. Same in every body (-u/-c/-C).
+#     A submodule entry (marker S) expands into sub-lines under its stat line,
+#     in two groups of at most 3 lines each, every group closing with a dim
+#     "… +N more" tail when it overflows:
+#       - its own UNCOMMITTED changes (working-tree bodies only — -u, and the
+#         wdir node -c/-C draw): this very stat block, recomputed with the
+#         submodule as cwd, indented one level in — same markers, colors and
+#         bars, and a dirty submodule inside it nests again. Without this a
+#         merely dirty submodule says nothing at all: its sha is unchanged, so
+#         git renders it as a bare "| 0".
+#       - the commits its pointer gained or lost, from "git diff
+#         --submodule=log", newest first — "›" for one gained, "‹" for one lost
+#         (a rewind) — dim. A bump git can't summarize (commits not present
+#         locally) adds none.
+#     A clean submodule at an unchanged sha isn't in the diff at all; a clean
+#     bump's S line still stands alone if git can't summarize it. Commit bodies
+#     (-c/-C) get the commit group only — a commit has no working tree.
 #   - Commit changes (opt-in via -c/--changes or -C/--changes-all; sapling has no
 #     equivalent): -c implies -u and, when the working tree is CLEAN, draws HEAD's
 #     own per-file stat block (vs its first parent; the empty tree for a root
@@ -187,7 +198,9 @@
 #     (\e[35m), S submodule cyan (\e[36m), U unmerged bold red (\e[1;31m); M modified
 #     and the rest default. A +x/-x hint (dim) flags executable-bit flips. git's own
 #     +/- stat graph (green/red) after the '|' is left intact. A submodule's
-#     expanded commit sub-lines (›/‹ and the "… +N more" tail) are all dim (\e[2m)
+#     expanded commit sub-lines (›/‹) and every "… +N more" tail are dim (\e[2m);
+#     its expanded uncommitted sub-lines are stat lines in their own right, so
+#     they keep these very colors, one level in
 #   - Symbols (@/o) and lines (│ ╭─╯): default
 #
 # Paging
@@ -486,17 +499,59 @@ function filter_refs {
 }
 
 function submodule_sublines {
-    # reply = capped, dim sub-lines listing a bumped submodule's changed commits
-    # — the `git diff --submodule=log` subjects, newest first — at most 3, then a
-    # "… +N more" line. Git prints "  > subject" for a commit gained and "  < "
-    # for one lost (a rewind); everything else in its output (the "Submodule
-    # path a..b:" header, "(commits not present)" notes) is skipped, so an
-    # unsummarizable bump yields nothing and its bare S line stands alone.
-    # $1 leading spaces (to align under the S line), $2 color_on, $3 submodule
-    # path, $4.. the diff endpoints `git diff` ran against ($parent $commit, or
-    # the working-tree target) — so both -c/-C (commit) and -u (worktree) work.
-    local lead=$1 color_on=$2 sub=$3; shift 3
+    # reply = the sub-lines that detail a submodule entry, drawn under its S
+    # line: first the submodule's own UNCOMMITTED changes, then the commits its
+    # pointer gained or lost. Each group renders at most 3 lines, then a dim
+    # "… +N more" tail.
+    #
+    # Uncommitted group (working-tree mode only — a committed diff has no
+    # working tree). The parent's gitlink diff can't reach inside a submodule:
+    # one that is merely dirty has an unchanged sha, so its stat line is a bare
+    # "| 0" saying nothing at all. So recompute this file's own stat block with
+    # the submodule as cwd and indent its body under the S line — same markers,
+    # colors and bars, one level in (a dirty submodule of a dirty submodule
+    # keeps nesting). It runs in a $(...) subshell so the cd is contained and
+    # the caller's STAT_* globals — which it is in the middle of rendering —
+    # stay untouched; uncommitted_stat's own die() then merely empties the
+    # capture, degrading to no sub-lines.
+    #
+    # Commit group: the `git diff --submodule=log` subjects, newest first. Git
+    # prints "  > subject" for a commit gained and "  < " for one lost (a
+    # rewind); everything else in its output (the "Submodule path a..b:"
+    # header, "(commits not present)" notes, and the "contains modified
+    # content" note the uncommitted group above covers) is skipped, so an
+    # unsummarizable bump yields nothing and a clean-worktree bump's bare S line
+    # stands alone.
+    #
+    # $1 leading spaces (to align under the S line), $2 color_on, $3 the columns
+    # the caller reserves ahead of each body line, $4 the commit being stat'd
+    # (empty in working-tree mode), $5 submodule path, $6.. the diff endpoints
+    # `git diff` ran against ($parent $commit, or the working-tree target) — so
+    # both -c/-C (commit) and -u (worktree) work.
+    local lead=$1 color_on=$2 reserve=$3 commit=$4 sub=$5; shift 5
     reply=()
+    local dim= reset=
+    (( color_on )) && { dim=$'\e[2m'; reset=$'\e[0m'; }
+    local -i cap=3 n=0 i=0
+
+    local -a dirty=()
+    if [[ -z $commit ]]; then
+        # Diff paths are repo-root-relative, and this script can run from any
+        # subdirectory, so resolve the submodule against the top level. An
+        # UNINITIALIZED submodule is an empty directory inside the parent's own
+        # worktree, where git would happily report the parent's changes as the
+        # submodule's — require the submodule's own .git (gitfile or dir) first.
+        local root= sdir=
+        root=$(git rev-parse --show-toplevel 2>/dev/null)
+        sdir=$root/$sub
+        if [[ -n $root && -e $sdir/.git ]]; then
+            dirty=("${(@f)$(cd -q -- $sdir &&
+                uncommitted_stat $color_on $(( reserve + ${#lead} + 3 )) &&
+                (( STAT_HAS_CHANGES )) && print -rl -- "${STAT_BODY[@]}")}")
+            dirty=(${dirty:#})
+        fi
+    fi
+
     local -a subjects=()
     local ln= dir=
     for ln in ${(f)"$(git diff --submodule=log "$@" -- "$sub" 2>/dev/null)"}; do
@@ -505,14 +560,20 @@ function submodule_sublines {
             '  < '*) dir='‹' ;;
             *) continue ;;
         esac
-        subjects+=("${dir} ${ln[5,-1]}")   # drop the 4-char "  > " / "  < " prefix
+        subjects+=("${dim}${dir} ${ln[5,-1]}${reset}")   # drop the "  > " / "  < " prefix
     done
-    (( ${#subjects} )) || return
-    local dim= reset=
-    (( color_on )) && { dim=$'\e[2m'; reset=$'\e[0m'; }
-    local -i cap=3 n=${#subjects} i=
+
+    # A --stat line carries its own leading space, so indent it one column less
+    # than the commit lines to land every marker (and every ›/‹) in one column.
+    n=${#dirty}
     for ((i = 1; i <= n && i <= cap; i++)); do
-        reply+=("${lead}    ${dim}${subjects[i]}${reset}")
+        reply+=("${lead}   ${dirty[i]}")
+    done
+    (( n > cap )) && reply+=("${lead}    ${dim}… +$(( n - cap )) more${reset}")
+
+    n=${#subjects}
+    for ((i = 1; i <= n && i <= cap; i++)); do
+        reply+=("${lead}    ${subjects[i]}")
     done
     (( n > cap )) && reply+=("${lead}    ${dim}… +$(( n - cap )) more${reset}")
 }
@@ -874,7 +935,7 @@ function uncommitted_stat {
                     # for the -u node consumer, which prefixes each element with
                     # its own gutter.
                     if [[ $mark == S ]]; then
-                        submodule_sublines "$lead" $color_on "$skey" $diff_args
+                        submodule_sublines "$lead" $color_on $reserve "$commit" "$skey" $diff_args
                         (( ${#reply} )) && rendered="${rendered}"$'\n'"${(F)reply}"
                     fi
                     r_line+=("$rendered"); r_rank+=("$rank"); r_name+=("$skey")

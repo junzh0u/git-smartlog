@@ -95,11 +95,20 @@ within each group, matching `git status`):
 | `U` | unmerged (conflict) | bold red |
 
 A pure executable-bit flip (`chmod`), which `--stat` renders as `| 0`, gets a
-trailing `+x`/`-x` hint. A **submodule bump** (`S`) expands: its
-`git diff --submodule=log` commit subjects render as dim sub-lines under the stat
-line, newest first, capped at 3 with a `… +N more` tail — `›` for a commit gained,
-`‹` for one lost (a rewind); a bump git can't summarize (commits not present
-locally) adds none. The `@` marker moves to the node — that's where the working
+trailing `+x`/`-x` hint. A **submodule** (`S`) expands into sub-lines under its
+stat line, in two groups of at most 3 lines each, each closing with a dim
+`… +N more` when it overflows:
+
+- its own **uncommitted changes** — this same stat block, recomputed inside the
+  submodule and indented one level in, keeping its markers, colors and bars (a
+  dirty submodule inside it nests again). Without this a merely dirty submodule
+  says nothing at all: its recorded sha is unchanged, so git renders it as a bare
+  `| 0`.
+- the commits its pointer **gained or lost**, from `git diff --submodule=log`,
+  newest first and dim — `›` for one gained, `‹` for one lost (a rewind); a bump
+  git can't summarize (commits not present locally) adds none.
+
+The `@` marker moves to the node — that's where the working
 copy is — and `HEAD` drops to an `o` (keeping its author and subject). This is a
 git-smartlog extension with no Sapling equivalent, so the output no longer mirrors
 `sl` (see [Differences](#differences-from-saplings-sl)):
@@ -116,6 +125,8 @@ $ git smartlog -u -n 2
   │  R logging.go => log.go | 0
   │  T config.json          | 5 +----
   │  S vendor/timeutil      | 2 +-
+  │      ? clock.go    | 1 +
+  │      M timeutil.go | 2 ++
   │      › v1.5.0
   │      › v1.4.0
   │      › v1.3.0
@@ -203,6 +214,8 @@ $ git smartlog -u -b
   │  R logging.go => log.go | 0
   │  T config.json          | 5 +----
   │  S vendor/timeutil      | 2 +-
+  │      ? clock.go    | 1 +
+  │      M timeutil.go | 2 ++
   │      › v1.5.0
   │      › v1.4.0
   │      › v1.3.0
@@ -262,6 +275,8 @@ $ git smartlog -u -n 2 -B -a
   │  R logging.go => log.go | 0
   │  T config.json          | 5 +----
   │  S vendor/timeutil      | 2 +-
+  │      ? clock.go    | 1 +
+  │      M timeutil.go | 2 ++
   │      › v1.5.0
   │      › v1.4.0
   │      › v1.3.0
@@ -439,6 +454,8 @@ $ git smartstat
  R logging.go => log.go | 0
  T config.json          | 5 +----
  S vendor/timeutil      | 2 +-
+     ? clock.go    | 1 +
+     M timeutil.go | 2 ++
      › v1.5.0
      › v1.4.0
      › v1.3.0

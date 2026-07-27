@@ -17,6 +17,8 @@
 #   - uncommitted working-tree changes exercising EVERY signal the -u node renders:
 #       A staged-new   ? untracked     M modified    D deleted      R renamed
 #       T typechange   S submodule     U unmerged    plus a +x mode flip
+#     The submodule is both bumped AND left dirty, so its entry expands into both
+#     groups: its own uncommitted changes, then the commits the bump gained.
 # To produce the conflict (U) the demo is intentionally left mid-merge. Commit dates
 # are anchored to "now" so relative times render nicely; screenshot soon after.
 set -euo pipefail
@@ -451,9 +453,13 @@ chmod +x scripts/release.sh
 rm config.json
 ln -s config.defaults.json config.json
 
-# S  submodule pointer change: bump the working copy forward to the origin tip,
-#    so it expands into the gained commits (newest first, capped at 3 + "… +N more")
-( cd vendor/timeutil && git checkout -q master )
+# S  submodule: bump the working copy forward to the origin tip, so the entry
+#    expands into the gained commits (newest first, capped at 3 + "… +N more"),
+#    and leave the submodule's own worktree dirty too, so the entry ALSO expands
+#    into its uncommitted changes — the group git's "| 2 +-" can't show
+( cd vendor/timeutil && git checkout -q master
+  printf '\nfunc Round(ms int64) int64 { return ms }\n' >> timeutil.go   # M
+  printf 'package timeutil\n' > clock.go )                               # ?
 
 cat <<EOF
 

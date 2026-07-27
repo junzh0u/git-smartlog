@@ -14,11 +14,13 @@ abbreviating anything — combine freely. See below.
 
 It began as a mimic of Sapling's `sl`, and still owes it the graph layout, the
 relative-time format and the color defaults. It has since grown enough of its
-own that it no longer tracks `sl`'s output, and isn't trying to. Three things
+own that it no longer tracks `sl`'s output, and isn't trying to. Four things
 come from [Jujutsu](https://github.com/jj-vcs/jj) instead: the
 uncommitted-changes node, since jj treats the working copy as a commit in its
-own right; the `(empty)` label on a commit that changed nothing; and hashes
-that dim everything past the prefix which uniquely identifies them.
+own right; the `(empty)` label on a commit that changed nothing; hashes that dim
+everything past the prefix which uniquely identifies them; and a node glyph that
+carries how rewritable the commit is (`o` → `◇` → `◆`) rather than leaving it to
+the palette.
 
 The story behind it is in
 [this post](https://junz.info/writing/git-smartlog/).
@@ -35,28 +37,40 @@ clean working tree:
 <!-- fixture: demo-clean -->
 ```text
 $ git smartlog
-  @  069cabb18f  14 minutes ago  junz  feat/retry-backoff*
+  @  2f0e95dfc5  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  b9b916ac16  Today at 19:55  junz
+  o  6660e2b318  Today at 20:10  junz
   │  Add exponential backoff with jitter
   │
-  o  1ad3c2a1ab  Today at 17:55  junz
+  o  859711ce71  Today at 18:10  junz
   │  (empty) Require golang.org/x/time
   │
-  o  9b9e5b6d72  Yesterday at 22:55  junz
+  o  0280c2f0a8  Yesterday at 23:10  junz
 ╭─╯  Extract retry policy into its own module
 │
-o  39d1dfd162  Thursday at 22:55  junz  origin/master
+◆  9126f994b8  Thursday at 23:10  junz  origin/master
 │  Bump dependencies
 ~
 ```
 
-`@` marks `HEAD`; the indented `o` nodes above the bend (`╭─╯`) are your unpushed
-draft commits, newest first. Below the bend sits the public base — the nearest
-pushed commit, here `origin/master` — and `~` marks the truncated history beyond
-it. This example and the next assume that clean tree: a dirty one always draws
-one more node on top, which is the section after them.
+`@` marks `HEAD`; the `o` nodes above the bend (`╭─╯`) are your draft commits,
+newest first. Below the bend sits the public base — the nearest pushed commit,
+here `origin/master`, drawn `◆` — and `~` marks the truncated history beyond it.
+This example and the next assume that clean tree: a dirty one always draws one
+more node on top, which is the section after them.
+
+The node glyph is a ramp of how set in stone a commit is: **`o`** a draft that's
+still only yours, **`◇`** a draft already pushed to a remote — rewriting it costs
+a force-push — and **`◆`** a public commit. `@` outranks all three, wherever the
+working copy is. (`◇` needs a branch of yours on a remote to show up; it appears
+in the `-b` examples further down, on `origin/hotfix`.)
+
+That ramp is shape rather than color on purpose. Indentation can't carry it — a
+`-b` side column is indented too — and neither can the palette: the draft and
+public hash colors are `\e[93m` and `\e[33m`, which are the *same yellow* in
+Dracula and most 16-color themes, so bold was doing all the work. Shape also
+survives `NO_COLOR`, a pipe, and every capture on this page.
 
 A subject prefixed **`(empty)`** is a commit that changed nothing against its
 parent — here, a rebase onto `origin/master` found the dependency bump already
@@ -81,25 +95,25 @@ subject back. The third is the submodule sub-line cap, further down.
 <!-- fixture: demo-clean -->
 ```text
 $ git smartlog -f
-  @  069cabb18f  14 minutes ago  junz  feat/retry-backoff*
+  @  2f0e95dfc5  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  b9b916ac16  Today at 19:55  junz
+  o  6660e2b318  Today at 20:10  junz
   │  Add exponential backoff with jitter
   │
-  o  1ad3c2a1ab  Today at 17:55  junz
+  o  859711ce71  Today at 18:10  junz
   │  (empty) Require golang.org/x/time
   │
-  o  9b9e5b6d72  Yesterday at 22:55  junz
+  o  0280c2f0a8  Yesterday at 23:10  junz
 ╭─╯  Extract retry policy into its own module
 │
-o  39d1dfd162  Thursday at 22:55  junz  origin/master
+◆  9126f994b8  Thursday at 23:10  junz  origin/master
 │  Bump dependencies
 │
-o  02f97156dd  Wednesday at 22:55  alice
+◆  13dfdace4e  Wednesday at 23:10  alice
 │  Introduce typed errors
 │
-o  f00cdf1bc1  Tuesday at 22:55  alice
+◆  566785cd0c  Tuesday at 23:10  alice
 │  Initial project scaffold
 ~
 ```
@@ -122,19 +136,19 @@ copy is — and `HEAD` drops to an `o` (keeping its author and subject):
 $ git smartlog
   @  Uncommitted changes  11 files, +30 -13
   │
-  o  069cabb18f  14 minutes ago  junz  feat/retry-backoff*
+  o  2f0e95dfc5  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  b9b916ac16  Today at 19:55  junz
+  o  6660e2b318  Today at 20:10  junz
   │  Add exponential backoff with jitter
   │
-  o  1ad3c2a1ab  Today at 17:55  junz
+  o  859711ce71  Today at 18:10  junz
   │  (empty) Require golang.org/x/time
   │
-  o  9b9e5b6d72  Yesterday at 22:55  junz
+  o  0280c2f0a8  Yesterday at 23:10  junz
 ╭─╯  Extract retry policy into its own module
 │
-o  39d1dfd162  Thursday at 22:55  junz  origin/master
+◆  9126f994b8  Thursday at 23:10  junz  origin/master
 │  Bump dependencies
 ~
 ```
@@ -213,29 +227,29 @@ $ git smartlog -c
   │      … +1 more
   │  U version.go           | 4 ++++
   │
-  o  069cabb18f  14 minutes ago  junz  feat/retry-backoff*
+  o  2f0e95dfc5  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │  M http_client.go | 15 ++++++++++++---
   │  M version.go     |  2 +-
   │  2 files, +13 -4
   │
-  o  b9b916ac16  Today at 19:55  junz
+  o  6660e2b318  Today at 20:10  junz
   │  Add exponential backoff with jitter
   │  A backoff.go | 13 +++++++++++++
   │  M retry.go   |  7 +++++++
   │  2 files, +20 -0
   │
-  o  1ad3c2a1ab  Today at 17:55  junz
+  o  859711ce71  Today at 18:10  junz
   │  (empty) Require golang.org/x/time
   │
-  o  9b9e5b6d72  Yesterday at 22:55  junz
+  o  0280c2f0a8  Yesterday at 23:10  junz
   │  Extract retry policy into its own module
   │  A retry.go       | 11 +++++++++++
   │  M http_client.go |  9 +++++----
   │  2 files, +16 -4
 ╭─╯
 │
-o  39d1dfd162  Thursday at 22:55  junz  origin/master
+◆  9126f994b8  Thursday at 23:10  junz  origin/master
 │  Bump dependencies
 ~
 ```
@@ -260,40 +274,40 @@ base:
 $ git smartlog -b -f
   @  Uncommitted changes  11 files, +30 -13
   │
-  o  069cabb18f  14 minutes ago  junz  feat/retry-backoff*
+  o  2eba87d41d  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  b9b916ac16  Today at 19:55  junz  wip/backoff
+  o  508eb458ca  Today at 20:42  junz  wip/backoff
   │  Add exponential backoff with jitter
   │
-  o  1ad3c2a1ab  Today at 17:55  junz
+  o  1d043187ca  Today at 18:42  junz
   │  (empty) Require golang.org/x/time
   │
-  │ o  c2c3ed0fed  Today at 04:55  junz  spike/http3
+  │ o  8c4ace2f8e  Today at 05:42  junz  spike/http3
   │ │  Spike HTTP/3 transport
   │ │
-  │ │ o  3b88fb56a6  Today at 03:55  junz  refactor/timeouts
+  │ │ o  def5ea265d  Today at 04:42  junz  refactor/timeouts
   │ ├─╯  Let callers override the attempt timeout
   │ │
-  │ o  f07997a32d  Today at 02:55  junz
+  │ o  fc76d17f31  Today at 03:42  junz
   ├─╯  Bound each attempt with a timeout
   │
-  o  9b9e5b6d72  Yesterday at 22:55  junz
+  o  fd1261ffc9  Yesterday at 23:42  junz
 ╭─╯  Extract retry policy into its own module
 │
-│ o  a991b4c622  Friday at 22:55  junz  origin/hotfix
+│ ◇  ad37e81b52  Friday at 23:42  junz  origin/hotfix
 ├─╯  Patch release 0.1.1
 │
-o  39d1dfd162  Thursday at 22:55  junz  origin/master
+◆  4e4eef0507  Thursday at 23:42  junz  origin/master
 ╷  Bump dependencies
 ╷
-╷ o  d1037c0e75  Yesterday at 21:55  junz  fix/redirect-loop
+╷ o  9746e604e8  Yesterday at 22:42  junz  fix/redirect-loop
 ╷ │  Abort redirect loops via CheckRedirect
 ╷ │
-╷ o  60a4d85847  Yesterday at 20:55  junz
+╷ o  da4f68a140  Yesterday at 21:42  junz
 ╭─╯  Cap redirect chains at 10 hops
 │
-o  f00cdf1bc1  Tuesday at 22:55  alice  prod
+◆  263b50e712  Tuesday at 23:42  alice  prod
 │  Initial project scaffold
 ~
 ```
@@ -308,40 +322,40 @@ window back to the default and the elision shows up too:
 $ git smartlog -b
   @  Uncommitted changes  11 files, +30 -13
   │
-  o  069cabb18f  14 minutes ago  junz  feat/retry-backoff*
+  o  2eba87d41d  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  b9b916ac16  Today at 19:55  junz  wip/backoff
+  o  508eb458ca  Today at 20:42  junz  wip/backoff
   │  Add exponential backoff with jitter
   │
-  o  1ad3c2a1ab  Today at 17:55  junz
+  o  1d043187ca  Today at 18:42  junz
   │  (empty) Require golang.org/x/time
   │
-  │ o  c2c3ed0fed  Today at 04:55  junz  spike/http3
+  │ o  8c4ace2f8e  Today at 05:42  junz  spike/http3
   │ │  Spike HTTP/3 transport
   │ │
-  │ │ o  3b88fb56a6  Today at 03:55  junz  refactor/timeouts
+  │ │ o  def5ea265d  Today at 04:42  junz  refactor/timeouts
   │ ├─╯  Let callers override the attempt timeout
   │ │
-  │ o  f07997a32d  Today at 02:55  junz
+  │ o  fc76d17f31  Today at 03:42  junz
   ├─╯  Bound each attempt with a timeout
   │
-  o  9b9e5b6d72  Yesterday at 22:55  junz
+  o  fd1261ffc9  Yesterday at 23:42  junz
 ╭─╯  Extract retry policy into its own module
 │
-│ o  a991b4c622  Friday at 22:55  junz  origin/hotfix
+│ ◇  ad37e81b52  Friday at 23:42  junz  origin/hotfix
 ├─╯  Patch release 0.1.1
 │
-o  39d1dfd162  Thursday at 22:55  junz  origin/master
+◆  4e4eef0507  Thursday at 23:42  junz  origin/master
 ╷  Bump dependencies
 ╷
-╷ o  d1037c0e75  Yesterday at 21:55  junz  fix/redirect-loop
+╷ o  9746e604e8  Yesterday at 22:42  junz  fix/redirect-loop
 ╷ │  Abort redirect loops via CheckRedirect
 ╷ │
-╷ o  60a4d85847  Yesterday at 20:55  junz
+╷ o  da4f68a140  Yesterday at 21:42  junz
 ╭─╯  Cap redirect chains at 10 hops
 │
-o  f00cdf1bc1  Tuesday at 22:55  prod
+◆  263b50e712  Tuesday at 23:42  prod
 │
 ~
 ```
@@ -366,7 +380,14 @@ In a real terminal the output is colorized — draft hashes in bold yellow,
 `HEAD`'s line in magenta, remote refs in green, `-b` branch names in cyan, and
 every hash dim past its unique prefix. ANSI is suppressed when stdout
 isn't a TTY (as in these captures) or when `NO_COLOR` is set — which is why
-`(empty)` is a word and the hash split is not.
+`(empty)` and the `o`/`◇`/`◆` ramp are text and the hash dimming is not. Nothing
+is encoded in the hash color alone; two of the three yellows in a 16-color theme
+are the same yellow, so anything that mattered had to go in the glyph.
+
+`◇` is deliberately weaker than jj's immutability line, which *excludes* remote
+bookmarks you track, on the grounds that rewriting your own pushed branch is
+routine. Painting a whole PR stack as frozen would be worse than saying nothing —
+hence the middle glyph rather than `◆`.
 
 ## Requirements
 
@@ -539,6 +560,16 @@ empty tree so staged and untracked files still show as additions.)
   merge-base with `HEAD` is closest to `HEAD` wins. `@{u}` and a local
   `main`/`master` are last-resort fallbacks when no remote trunk exists.
 - **Drafts** — first-parent commits in `HEAD ^base`, newest first.
+- **Symbols** — `@` where the working copy is, then a ramp: `o` unpushed draft,
+  `◇` pushed draft, `◆` public. jj's idea: the node carries the phase, so it
+  survives `NO_COLOR`, a pipe, and a `-b` side column's indentation. Shape and
+  not color because `\e[93m`/`\e[33m` are one yellow in most themes.
+- **Pushed drafts** — a draft reachable from any remote-tracking ref draws `◇`.
+  One `git rev-list <draft heads> --not --remotes`
+  prints the drafts that *aren't*, so the ones it omits are pushed; the walk
+  stops at the remote boundary, so it's bounded by the unpushed set, and it's
+  skipped entirely in a repo with no remotes. (`--no-walk` doesn't restrict that
+  to the argument set — with `--not` in play git walks regardless.)
 - **Hashes** — 10 digits, but only the leading ones matter: a second `%h` at
   `--abbrev=4` in the same `git log` pass asks git for the shortest prefix that
   names exactly one object, and the digits past it render dim. A repo big enough

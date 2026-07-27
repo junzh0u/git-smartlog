@@ -58,6 +58,13 @@
 #     sitting on, can equal HEAD and collapse the whole draft stack. @{u} then a
 #     local main/master are last-resort fallbacks when no remote trunk exists.
 #   - Drafts: first-parent commits in `HEAD ^merge_base`, newest first
+#   - Pushed drafts: a draft reachable from any remote-tracking ref draws ◇
+#     instead of o — it's out there, so rewriting it costs a force-push.
+#     Deliberately weaker than jj's immutability line, which excludes remote
+#     bookmarks you track precisely because rewriting your own pushed branch is
+#     routine; freezing a whole PR stack would be worse than saying nothing —
+#     hence the middle glyph rather than ◆. One `git rev-list <draft heads>
+#     --not --remotes` decides it; see the comment in main.
 #   - Public window: one commit — base_ref (or merge_base if base is ahead of
 #     HEAD's chain), with "~" for the history below it. -f streams that history
 #     instead; there is no in-between, since the ╷ elision below already says
@@ -73,7 +80,18 @@
 #   <symbol>  <hash:10>  <reltime>  <author>  [<refs>]
 #   │  [(empty) ]<subject>
 #   │
-#   - Symbol: @ for HEAD, o otherwise
+#   - Symbol: a ramp of how set in stone the commit is — o a draft that's still
+#     only yours, ◇ a draft already on a remote (rewriting costs a force-push),
+#     ◆ a public commit. @ outranks all three: where the working copy is beats
+#     what phase it's in. Borrowed from jj, whose node alphabet carries the
+#     phase (@ working copy, ○ mutable, ◆ immutable); drafts stay `o` rather
+#     than `○` because `o` is one column wide in every font and the contrast is
+#     what matters. Shape, not color, because color can't carry this: the
+#     graph's own palette leans on \e[33m vs \e[93m, which is one yellow in
+#     Dracula and most 16-color themes — bold was doing all the work. Shape
+#     also survives NO_COLOR, a pipe, and every text capture in the README,
+#     none of which indentation alone can disambiguate (a -b side column is
+#     indented too).
 #   - Hash: HASH_WIDTH digits cut from %H, split at the shortest prefix that
 #     uniquely names the commit — that prefix keeps the hash color, the rest
 #     goes dim, so a row shows how much of it you'd have to type (jj's id
@@ -179,8 +197,12 @@
 #     -f/--full turns this off, showing full headers for every commit.
 #
 # Colors (ANSI; suppressed when stdout isn't a TTY or NO_COLOR is set)
-#   - Draft hash: bright-yellow + bold (\e[93;1m) — applies to ALL drafts
-#   - Public hash: yellow (\e[33m)
+#   - Draft hash: bright-yellow + bold (\e[93;1m) — applies to ALL drafts,
+#     pushed or not; the o/◇ node carries that distinction instead
+#   - Public hash: yellow (\e[33m). Note this differs from the draft color by
+#     weight, not hue: \e[33m and \e[93m are one yellow in Dracula and most
+#     16-color themes. That's survivable because ◆/o says it too — and it's
+#     why no NEW distinction may be encoded as a hash color
 #   - Hash digits past the unique prefix: dim (\e[2m), in both colors above
 #   - "(empty)" subject prefix: dim (\e[2m) — but the word itself is text, so
 #     the mark survives a palette-off run; only its dimming is a color
@@ -476,6 +498,21 @@ function abbrev_hash {
         REPLY=${sha[1,HASH_WIDTH]}
     else
         REPLY=$uniq
+    fi
+}
+
+function draft_node {
+    # REPLY = the node glyph for draft $1: ◇ once the commit is on a remote, o
+    # while it's still only yours. Third step of the ramp is ◆ (public), so the
+    # shape alone reads o → ◇ → ◆, increasingly set in stone. Deliberately NOT
+    # carried by the hash color: under this script's own palette (and Dracula,
+    # and most 16-color themes) \e[33m and \e[93m are the same yellow to the
+    # eye, so a color-only mark would have been invisible — bold was doing all
+    # the work. Reads main's pushed map via dynamic scoping.
+    if [[ -n ${pushed[$1]:-} ]]; then
+        REPLY=◇
+    else
+        REPLY=o
     fi
 }
 
@@ -1330,7 +1367,8 @@ function emit_subtree {
         done
         print -r -- "${prefix}│"
     fi
-    local symbol=o text_color=
+    draft_node $c
+    local symbol=$REPLY text_color=
     if [[ $c == $head_sha ]] && (( ! has_changes )); then
         symbol=@
         text_color=$C_HEAD_TEXT
@@ -1616,6 +1654,37 @@ function main {
         done
     fi
 
+    # Which drafts are already on a remote. Deliberately NOT jj's immutability
+    # line, which excludes remote bookmarks you TRACK precisely because
+    # rewriting your own pushed branch is routine — painting a whole PR stack as
+    # frozen would be worse than saying nothing. So this claims the weaker, true
+    # thing: the commit is out there, and rewriting it now costs a force-push.
+    # Drawn as the middle step of the node ramp (o → ◇ → ◆), not as a color:
+    # \e[33m and \e[93m are the same yellow to the eye in Dracula and most
+    # 16-color themes, so a color-only mark was invisible in practice.
+    #
+    # One call: rev-list of the draft heads --not --remotes prints every draft
+    # NOT reachable from a remote-tracking ref, so the drafts it omits are the
+    # pushed ones. --no-walk does NOT restrict that to the argument set (with
+    # --not in play git walks anyway, stopping at the remote boundary — which is
+    # what bounds the walk to the unpushed set), so intersect against the draft
+    # list rather than reading the output as the input. Skipped outright in a
+    # repo with no remote refs, where --not excludes nothing and the walk would
+    # cover all of history just to answer "none of them".
+    local -A pushed=()
+    local -a draft_all=()
+    if (( show_branches )); then draft_all=(${(k)in_draft}); else draft_all=($drafts); fi
+    if (( ${#draft_all} )) && [[ -n $(git for-each-ref --count=1 refs/remotes 2>/dev/null) ]]; then
+        local -A unpushed=()
+        local uc= dsha=
+        while IFS= read -r uc; do
+            [[ -n $uc ]] && unpushed[$uc]=1
+        done < <(git rev-list $head_sha $bfull_heads --not --remotes 2>/dev/null)
+        for dsha in $draft_all; do
+            [[ -n ${unpushed[$dsha]} ]] || pushed[$dsha]=1
+        done
+    fi
+
     local -a publics
     if (( show_branches )); then
         # Shown publics: the -n window from the trunk tip, plus the merge-base
@@ -1882,7 +1951,8 @@ function render_plan {
             fi
             for ((di = 1; di <= n_drafts; di++)); do
                 idx=${midx[${drafts[di]}]}
-                symbol=o
+                draft_node ${drafts[di]}
+                symbol=$REPLY
                 text_color=
                 if [[ ${drafts[di]} == $head_sha ]] && (( ! has_changes )); then
                     # With uncommitted changes the @ marker belongs to the wdir
@@ -1938,7 +2008,7 @@ function render_plan {
             pp=${el#public:}
             (( pub_i++ ))
             idx=${midx[$pp]}
-            symbol=o
+            symbol=◆
             text_color=
             if [[ $pp == $head_sha ]] && (( ! has_changes )); then
                 # With uncommitted changes the @ marker belongs to the wdir node
@@ -2043,7 +2113,7 @@ function emit_tail_row {
             commit_stats[$fsha]=${(F)st_body}
         fi
     fi
-    commit_header $idx o '' "$C_PUBLIC_HASH" '' $is_compact
+    commit_header $idx ◆ '' "$C_PUBLIC_HASH" '' $is_compact
     empty_tag $fsha
     local subject_body="  ${REPLY}${subjects[idx]}"
     (( is_compact )) && subject_body=

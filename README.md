@@ -101,8 +101,8 @@ within each group, matching `git status`):
 
 A pure executable-bit flip (`chmod`), which `--stat` renders as `| 0`, gets a
 trailing `+x`/`-x` hint. A **submodule** (`S`) expands into sub-lines under its
-stat line, in two groups of at most 3 lines each, each closing with a dim
-`… +N more` when it overflows:
+stat line, in two groups of at most 10 lines each, each closing with a dim
+`… +N more` when it overflows (`-N` lifts the cap):
 
 - its own **uncommitted changes** — this same stat block, recomputed inside the
   submodule and indented one level in, keeping its markers, colors and bars (a
@@ -134,25 +134,32 @@ $ git smartlog -n 2
   │  S vendor/timeutil      | 2 +-
   │      ? clock.go    | 1 +
   │      M timeutil.go | 2 ++
+  │      › v1.11.0
+  │      › v1.10.0
+  │      › v1.9.0
+  │      › v1.8.0
+  │      › v1.7.0
+  │      › v1.6.0
   │      › v1.5.0
   │      › v1.4.0
   │      › v1.3.0
-  │      … +2 more
+  │      › v1.2.0
+  │      … +1 more
   │  U version.go           | 4 ++++
   │
-  o  e6152ce8e3  14 minutes ago  junz  feat/retry-backoff*
+  o  6e3da2593c  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  6f1c5c322c  Today at 17:34  junz
+  o  0c83b006b2  Today at 18:08  junz
   │  Add exponential backoff with jitter
   │
-  o  4166003ae8  Yesterday at 20:34  junz
+  o  090efdec03  Yesterday at 21:08  junz
 ╭─╯  Extract retry policy into its own module
 │
-o  99b3100c38  Thursday at 20:34  junz  origin/master
+o  0fa721bda0  Thursday at 21:08  junz  origin/master
 │  Bump dependencies
 │
-o  71068b2065  Wednesday at 20:34
+o  6bcf9de32d  Wednesday at 21:08
 │
 ~
 ```
@@ -181,32 +188,39 @@ $ git smartlog -c
   │  S vendor/timeutil      | 2 +-
   │      ? clock.go    | 1 +
   │      M timeutil.go | 2 ++
+  │      › v1.11.0
+  │      › v1.10.0
+  │      › v1.9.0
+  │      › v1.8.0
+  │      › v1.7.0
+  │      › v1.6.0
   │      › v1.5.0
   │      › v1.4.0
   │      › v1.3.0
-  │      … +2 more
+  │      › v1.2.0
+  │      … +1 more
   │  U version.go           | 4 ++++
   │
-  o  e6152ce8e3  14 minutes ago  junz  feat/retry-backoff*
+  o  6e3da2593c  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │  M http_client.go | 15 ++++++++++++---
   │  M version.go     |  2 +-
   │  2 files, +13 -4
   │
-  o  6f1c5c322c  Today at 17:34  junz
+  o  0c83b006b2  Today at 18:08  junz
   │  Add exponential backoff with jitter
   │  A backoff.go | 13 +++++++++++++
   │  M retry.go   |  7 +++++++
   │  2 files, +20 -0
   │
-  o  4166003ae8  Yesterday at 20:34  junz
+  o  090efdec03  Yesterday at 21:08  junz
   │  Extract retry policy into its own module
   │  A retry.go       | 11 +++++++++++
   │  M http_client.go |  9 +++++----
   │  2 files, +16 -4
 ╭─╯
 │
-o  99b3100c38  Thursday at 20:34  junz  origin/master
+o  0fa721bda0  Thursday at 21:08  junz  origin/master
 │  Bump dependencies
 ~
 ```
@@ -241,46 +255,53 @@ $ git smartlog -n 2 -b -a
   │  S vendor/timeutil      | 2 +-
   │      ? clock.go    | 1 +
   │      M timeutil.go | 2 ++
+  │      › v1.11.0
+  │      › v1.10.0
+  │      › v1.9.0
+  │      › v1.8.0
+  │      › v1.7.0
+  │      › v1.6.0
   │      › v1.5.0
   │      › v1.4.0
   │      › v1.3.0
-  │      … +2 more
+  │      › v1.2.0
+  │      … +1 more
   │  U version.go           | 4 ++++
   │
-  o  e6152ce8e3  14 minutes ago  junz  feat/retry-backoff*
+  o  6e3da2593c  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  6f1c5c322c  Today at 17:34  junz  wip/backoff
+  o  0c83b006b2  Today at 18:08  junz  wip/backoff
   │  Add exponential backoff with jitter
   │
-  │ o  29fd8b8adc  Today at 02:34  junz  spike/http3
+  │ o  2657eccd4f  Today at 03:08  junz  spike/http3
   │ │  Spike HTTP/3 transport
   │ │
-  │ │ o  6c58835739  Today at 01:34  junz  refactor/timeouts
+  │ │ o  da5c0f13e4  Today at 02:08  junz  refactor/timeouts
   │ ├─╯  Let callers override the attempt timeout
   │ │
-  │ o  8696775dd4  Today at 00:34  junz
+  │ o  e4f977d524  Today at 01:08  junz
   ├─╯  Bound each attempt with a timeout
   │
-  o  4166003ae8  Yesterday at 20:34  junz
+  o  090efdec03  Yesterday at 21:08  junz
 ╭─╯  Extract retry policy into its own module
 │
-│ o  d34d226c1d  Friday at 20:34  junz  origin/hotfix
+│ o  f2c2a36ab1  Friday at 21:08  junz  origin/hotfix
 ├─╯  Patch release 0.1.1
 │
-o  99b3100c38  Thursday at 20:34  junz  origin/master
+o  0fa721bda0  Thursday at 21:08  junz  origin/master
 │  Bump dependencies
 │
-o  71068b2065  Wednesday at 20:34  alice
+o  6bcf9de32d  Wednesday at 21:08  alice
 │  Introduce typed errors
 │
-│ o  fd5e793e05  Yesterday at 19:34  junz  fix/redirect-loop
+│ o  91c6ddd683  Yesterday at 20:08  junz  fix/redirect-loop
 │ │  Abort redirect loops via CheckRedirect
 │ │
-│ o  9d58ac5f6c  Yesterday at 18:34  junz
+│ o  2b8a34e6c4  Yesterday at 19:08  junz
 ├─╯  Cap redirect chains at 10 hops
 │
-o  2438d674fc  Tuesday at 20:34  alice  prod
+o  e94441f952  Tuesday at 21:08  alice  prod
 │  Initial project scaffold
 ~
 ```
@@ -306,43 +327,50 @@ $ git smartlog -b
   │  S vendor/timeutil      | 2 +-
   │      ? clock.go    | 1 +
   │      M timeutil.go | 2 ++
+  │      › v1.11.0
+  │      › v1.10.0
+  │      › v1.9.0
+  │      › v1.8.0
+  │      › v1.7.0
+  │      › v1.6.0
   │      › v1.5.0
   │      › v1.4.0
   │      › v1.3.0
-  │      … +2 more
+  │      › v1.2.0
+  │      … +1 more
   │  U version.go           | 4 ++++
   │
-  o  e6152ce8e3  14 minutes ago  junz  feat/retry-backoff*
+  o  6e3da2593c  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  6f1c5c322c  Today at 17:34  junz  wip/backoff
+  o  0c83b006b2  Today at 18:08  junz  wip/backoff
   │  Add exponential backoff with jitter
   │
-  │ o  29fd8b8adc  Today at 02:34  junz  spike/http3
+  │ o  2657eccd4f  Today at 03:08  junz  spike/http3
   │ │  Spike HTTP/3 transport
   │ │
-  │ │ o  6c58835739  Today at 01:34  junz  refactor/timeouts
+  │ │ o  da5c0f13e4  Today at 02:08  junz  refactor/timeouts
   │ ├─╯  Let callers override the attempt timeout
   │ │
-  │ o  8696775dd4  Today at 00:34  junz
+  │ o  e4f977d524  Today at 01:08  junz
   ├─╯  Bound each attempt with a timeout
   │
-  o  4166003ae8  Yesterday at 20:34  junz
+  o  090efdec03  Yesterday at 21:08  junz
 ╭─╯  Extract retry policy into its own module
 │
-│ o  d34d226c1d  Friday at 20:34  junz  origin/hotfix
+│ o  f2c2a36ab1  Friday at 21:08  junz  origin/hotfix
 ├─╯  Patch release 0.1.1
 │
-o  99b3100c38  Thursday at 20:34  junz  origin/master
+o  0fa721bda0  Thursday at 21:08  junz  origin/master
 ╷  Bump dependencies
 ╷
-╷ o  fd5e793e05  Yesterday at 19:34  junz  fix/redirect-loop
+╷ o  91c6ddd683  Yesterday at 20:08  junz  fix/redirect-loop
 ╷ │  Abort redirect loops via CheckRedirect
 ╷ │
-╷ o  9d58ac5f6c  Yesterday at 18:34  junz
+╷ o  2b8a34e6c4  Yesterday at 19:08  junz
 ╭─╯  Cap redirect chains at 10 hops
 │
-o  2438d674fc  Tuesday at 20:34  prod
+o  e94441f952  Tuesday at 21:08  prod
 │
 ~
 ```
@@ -438,8 +466,9 @@ The three view flags below are independent and combine freely.
   -P, --no-prs        turn PR tagging off and forget the remembered -p
                       (wins when both are given)
   -n, --limit N       public commits to show, including the merge-base (default 1)
-  -N, --no-limit      don't stop at the -n window: keep streaming older public
-                      history below it — lazily when paged — like git log
+  -N, --no-limit      don't truncate: keep streaming older public history
+                      below the -n window — lazily when paged, like git log —
+                      and stop capping a submodule entry's sub-lines at 10
       --base REV      override the public base (default: nearest remote trunk, e.g.
                       origin/HEAD, origin/main, origin/master, upstream/main)
   -C <path>           run as if started in <path>, like git's own -C; repeats
@@ -492,10 +521,17 @@ $ git smartstat
  S vendor/timeutil      | 2 +-
      ? clock.go    | 1 +
      M timeutil.go | 2 ++
+     › v1.11.0
+     › v1.10.0
+     › v1.9.0
+     › v1.8.0
+     › v1.7.0
+     › v1.6.0
      › v1.5.0
      › v1.4.0
      › v1.3.0
-     … +2 more
+     › v1.2.0
+     … +1 more
  U version.go           | 4 ++++
 ```
 
@@ -582,7 +618,9 @@ empty tree so staged and untracked files still show as additions.)
   at the `-n` window: older history keeps streaming below it — lazily when
   paged, so scrolling keeps revealing commits like plain `git log`, down to
   the root commit. Without `-N` the window and the trailing `~` truncation row
-  are unconditional.
+  are unconditional. `-N` reads as *don't truncate* rather than strictly *no
+  `-n` limit*, so it also lifts the 10-line cap on a submodule entry's
+  sub-lines — the only way to see every commit a big bump brought in.
 
 ## Differences from Sapling's `sl`
 

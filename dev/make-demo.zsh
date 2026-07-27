@@ -35,15 +35,17 @@ SUBREMOTE="${DEMO}-timeutil.git"
 
 rm -rf "$DEMO" "$REMOTE" "$SUBREMOTE"
 
-# ── A submodule origin (several commits, so a pointer BUMP expands to a commit
-#    list — newest first, capped at 3 with a "… +N more" tail) ─────────────────
+# ── A submodule origin. Twelve commits, and the demo pins the submodule at the
+#    first, so bumping it forward gains ELEVEN — one past the cap — and the
+#    entry expands to the newest 10 plus a "… +N more" tail. -N lifts that cap,
+#    and is the only way to see the rest. ────────────────────────────────────
 git init -q --bare -b master "$SUBREMOTE"   # HEAD on master so the clone checks out
 subwork=$(mktemp -d)
 git init -q -b master "$subwork"
 (
   cd "$subwork"
   git config user.name "Time Util"; git config user.email "tz@example.com"
-  for v in 1.0.0 1.1.0 1.2.0 1.3.0 1.4.0 1.5.0; do
+  for v in 1.0.0 1.1.0 1.2.0 1.3.0 1.4.0 1.5.0 1.6.0 1.7.0 1.8.0 1.9.0 1.10.0 1.11.0; do
     printf 'package timeutil\n\nconst Version = "%s"\n' "$v" > timeutil.go
     git add .; git -c commit.gpgsign=false commit -q -m "v$v"
   done

@@ -100,8 +100,8 @@
 #     moves to the node — that's where the working copy is — and HEAD drops to o
 #     (keeps author/subject).
 #     A submodule entry (marker S) expands into sub-lines under its stat line,
-#     in two groups of at most 3 lines each, every group closing with a dim
-#     "… +N more" tail when it overflows:
+#     in two groups of at most 10 lines each, every group closing with a dim
+#     "… +N more" tail when it overflows (-N lifts the cap — see Paging):
 #       - its own UNCOMMITTED changes (the wdir node only — a -c commit body
 #         has no working tree): this very stat block, recomputed with the
 #         submodule as cwd, indented one level in — same markers, colors and
@@ -200,7 +200,10 @@
 #   log` from walking ahead of the pager, so scrolling keeps revealing
 #   commits like plain `git log`, down to the root commit; piped, the full
 #   history streams out, also like `git log`. Without -N the -n window and
-#   the trailing "~" are unconditional, paged or not.
+#   the trailing "~" are unconditional, paged or not. -N reads as "don't
+#   truncate" rather than strictly "no -n limit", so it also lifts the 10-line
+#   cap on a submodule entry's sub-lines (SUBLINE_CAP), all the way down
+#   through a nested submodule.
 #
 # Relative time — mirrors sapling's `smartdate(date, 5400, age, simpledate)`:
 #   - Elapsed <= 5400s (90 min): `age()` — walks scales year→second and uses the
@@ -309,8 +312,9 @@ The three view flags below are independent and combine freely.
   -P, --no-prs        turn PR tagging off and forget the remembered -p
                       (wins when both are given)
   -n, --limit N       public commits to show, including the merge-base (default 1)
-  -N, --no-limit      don't stop at the -n window: keep streaming older public
-                      history below it — lazily when paged — like git log
+  -N, --no-limit      don't truncate: keep streaming older public history
+                      below the -n window — lazily when paged, like git log —
+                      and stop capping a submodule entry's sub-lines at 10
       --base REV      override the public base (default: nearest remote trunk, e.g.
                       origin/HEAD, origin/main, origin/master, upstream/main)
   -C <path>           run as if started in <path>, like git's own -C; repeats
@@ -395,6 +399,12 @@ typeset -g NOW TODAY_MIDNIGHT CURRENT_YEAR ACTIVE_BRANCH
 # uncommitted_stat()'s outputs (REPLY-style globals, read by both entry points).
 typeset -g STAT_HAS_CHANGES STAT_SUMMARY
 typeset -ga STAT_BODY
+
+# Lines a submodule entry may expand to per group before the rest fold into a
+# "… +N more" tail; 0 lifts the cap entirely, which -N/--no-limit does. Read by
+# submodule_sublines, and inherited by the nested run a dirty submodule inside a
+# submodule triggers, so -N uncaps all the way down.
+typeset -g SUBLINE_CAP=10
 
 # filter_refs' second output: the branch names behind the refs it kept — the
 # active branch's name (even when its display is folded into the same-name
@@ -512,8 +522,8 @@ function filter_refs {
 function submodule_sublines {
     # reply = the sub-lines that detail a submodule entry, drawn under its S
     # line: first the submodule's own UNCOMMITTED changes, then the commits its
-    # pointer gained or lost. Each group renders at most 3 lines, then a dim
-    # "… +N more" tail.
+    # pointer gained or lost. Each group renders at most SUBLINE_CAP lines,
+    # then a dim "… +N more" tail; the cap is lifted (0) under -N.
     #
     # Uncommitted group (working-tree mode only — a committed diff has no
     # working tree). The parent's gitlink diff can't reach inside a submodule:
@@ -543,7 +553,7 @@ function submodule_sublines {
     reply=()
     local dim= reset=
     (( color_on )) && { dim=$'\e[2m'; reset=$'\e[0m'; }
-    local -i cap=3 n=0 i=0
+    local -i cap=${SUBLINE_CAP:-10} n=0 i=0 shown=0
 
     local -a dirty=()
     if [[ -z $commit ]]; then
@@ -574,16 +584,20 @@ function submodule_sublines {
     # A --stat line carries its own leading space, so indent it one column less
     # than the commit lines to land every marker (and every ›/‹) in one column.
     n=${#dirty}
-    for ((i = 1; i <= n && i <= cap; i++)); do
+    shown=$n
+    (( cap > 0 && cap < n )) && shown=$cap
+    for ((i = 1; i <= shown; i++)); do
         reply+=("${lead}   ${dirty[i]}")
     done
-    (( n > cap )) && reply+=("${lead}    ${dim}… +$(( n - cap )) more${reset}")
+    (( shown < n )) && reply+=("${lead}    ${dim}… +$(( n - shown )) more${reset}")
 
     n=${#subjects}
-    for ((i = 1; i <= n && i <= cap; i++)); do
+    shown=$n
+    (( cap > 0 && cap < n )) && shown=$cap
+    for ((i = 1; i <= shown; i++)); do
         reply+=("${lead}    ${subjects[i]}")
     done
-    (( n > cap )) && reply+=("${lead}    ${dim}… +$(( n - cap )) more${reset}")
+    (( shown < n )) && reply+=("${lead}    ${dim}… +$(( n - shown )) more${reset}")
 }
 
 function uncommitted_stat {
@@ -1257,6 +1271,9 @@ function main {
     (( ${#ARG_ALL_AUTHORS} )) && all_authors=1
     local no_limit=0
     (( ${#ARG_NO_LIMIT} )) && no_limit=1
+    # -N means "don't truncate": the public column keeps going, and a submodule
+    # entry stops folding its tail into "… +N more".
+    (( no_limit )) && SUBLINE_CAP=0
     # -p is sticky per repo: an explicit -p drops a marker file in the git dir
     # (smartlog-pr-on, beside the PR cache — nothing needs gitignoring) so
     # later runs tag PRs without the flag; an explicit -P/--no-prs removes the

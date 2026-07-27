@@ -518,22 +518,17 @@ empty tree so staged and untracked files still show as additions.)
   expansion nobody would see.
 - **Public window** — one commit: the base, with `~` below it. `-f` streams
   the history below instead.
-- **Other branches** — with `-b`/`--branches`, every other local branch joins the
-  graph as a single node (its head commit) above its anchor — the nearest shown
-  commit down its chain: a draft of the current stack, another branch's node,
-  or its fork point with the trunk — tagged with a dim `(+N)` count of commits
-  since that anchor; branch names render
-  cyan so they stand apart from green remote refs. Trunk fork points are added
-  to the public column, with skipped commits eliding to Sapling's dotted `╷`
-  spine. A
-  branch merged into the trunk — or pointing at a commit already on screen —
-  labels that commit instead of adding a node, and a branch whose same-name
-  remote ref sits at the same commit shows only the remote name.
-- **Full stacks** — with `-b`/`--branches`, every head's first-parent chain
+- **Other branches** — with `-b`/`--branches`, every head's first-parent chain
   is unioned into a forest of draft trees (shared prefixes dedup), each rendered
   above its root's public fork point: the spine child continues the column, side
   subtrees open one column deeper per fork level and close with a `├─╯` bend
-  above the fork. Includes commits stacked above `HEAD`.
+  above the fork. Includes commits stacked above `HEAD`. Fork points are added
+  to the public column no matter how far down they sit, with commits skipped
+  between them eliding to Sapling's dotted `╷` spine. Branch names render cyan
+  so they stand apart from green remote refs. Two branches don't get a node of
+  their own: one merged into the trunk (its head *is* the merge-base) labels
+  that public commit instead, and one whose same-name remote ref sits at the
+  same commit shows only the remote name.
 - **PR numbers** — with `-p`/`--prs`, every branch name shown on a commit (the
   active branch, a remote bookmark, or a `-b` local) that has a GitHub PR
   gets a trailing `#N` tag: blue for open, dim blue for draft, magenta for

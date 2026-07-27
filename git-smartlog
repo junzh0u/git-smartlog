@@ -177,8 +177,7 @@
 #     (\e[33m). Mirrors sapling's [color] defaults sl.remote=green, sl.active=yellow
 #     (builtin_static/production.rs)
 #   - Local branch names from -b: cyan (\e[36m) — deliberately NOT sapling's
-#     sl.book green, so local branches stand apart from green remote refs; the
-#     "(+N)" commits-since-fork tag: dim (\e[2m)
+#     sl.book green, so local branches stand apart from green remote refs
 #   - PR tags from -p: open blue (\e[34m) — deliberately NOT GitHub's open
 #     green, so tags stand apart from green remote refs (and read as links);
 #     draft dim blue (\e[2;34m), merged magenta (\e[35m), closed red (\e[31m).
@@ -1065,10 +1064,10 @@ function uncommitted_stat {
 function commit_header {
     # Print one commit's header row. $1 index into the metadata arrays, $2 node
     # symbol, $3 gutter prefix, $4 hash color, $5 text color ('' for none),
-    # $6 compact (1 drops the author), $7 pre-colored suffix (the -b "(+N)"
-    # tag). Reads main's metadata arrays and C_* palette via zsh dynamic
-    # scoping, plus REPLY-style helpers reltime/filter_refs.
-    local i=$1 symbol=$2 g=$3 hash_color=$4 text_color=$5 compact=$6 extra=$7
+    # $6 compact (1 drops the author). Reads main's metadata arrays and C_*
+    # palette via zsh dynamic scoping, plus REPLY-style helpers
+    # reltime/filter_refs.
+    local i=$1 symbol=$2 g=$3 hash_color=$4 text_color=$5 compact=$6
     local text_reset=
     [[ -n $text_color ]] && text_reset=$C_RESET
 
@@ -1131,7 +1130,7 @@ function commit_header {
     local author_seg="  ${authors[$i]}"
     (( compact )) && author_seg=
 
-    print -r -- "${g}${symbol}  ${hash_color}${hashes[$i]}${C_RESET}${text_color}  ${time_str}${author_seg}${text_reset}${ref_display}${pr_seg}${extra}"
+    print -r -- "${g}${symbol}  ${hash_color}${hashes[$i]}${C_RESET}${text_color}  ${time_str}${author_seg}${text_reset}${ref_display}${pr_seg}"
 }
 
 function subtree_epoch {
@@ -1262,7 +1261,7 @@ function emit_subtree {
         symbol=@
         text_color=$C_HEAD_TEXT
     fi
-    commit_header ${midx[$c]} $symbol "$prefix" "$C_DRAFT_HASH" "$text_color" 0 ''
+    commit_header ${midx[$c]} $symbol "$prefix" "$C_DRAFT_HASH" "$text_color" 0
 }
 
 function main {
@@ -1774,7 +1773,7 @@ function render_plan {
                     symbol=@
                     text_color=$C_HEAD_TEXT
                 fi
-                commit_header $idx $symbol "$g" "$C_DRAFT_HASH" "$text_color" 0 ''
+                commit_header $idx $symbol "$g" "$C_DRAFT_HASH" "$text_color" 0
                 subject_body="  ${text_color}${subjects[idx]}${text_color:+$C_RESET}"
                 if (( di == n_drafts )); then
                     # A stat body must stay in ITS commit's column: printed
@@ -1837,7 +1836,7 @@ function render_plan {
             if (( ! full )) && [[ $pp != $head_sha && ${author_emails[idx]} != $my_email ]]; then
                 is_compact=1
             fi
-            commit_header $idx $symbol '' "$C_PUBLIC_HASH" "$text_color" $is_compact ''
+            commit_header $idx $symbol '' "$C_PUBLIC_HASH" "$text_color" $is_compact
             subject_body="  ${text_color}${subjects[idx]}${text_color:+$C_RESET}"
             (( is_compact )) && subject_body=
             if (( pl_i == n_plan )); then
@@ -1896,7 +1895,7 @@ function stream_public_tail {
                 commit_stats[$fsha]=${(F)st_body}
             fi
         fi
-        commit_header $idx o '' "$C_PUBLIC_HASH" '' $is_compact ''
+        commit_header $idx o '' "$C_PUBLIC_HASH" '' $is_compact
         subject_body="  ${subjects[idx]}"
         (( is_compact )) && subject_body=
         print -r -- "│${subject_body}"

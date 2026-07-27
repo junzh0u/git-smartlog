@@ -756,7 +756,10 @@ function uncommitted_stat {
         # committed to HAS_CHANGES from porcelain — an untracked directory alone
         # produces no diff yet still renders a body line.)
         if [[ -n $commit ]]; then
-            (( ${#diff_out} )) || return
+            # Content, not count: ${(@f)} of empty output still yields one
+            # (empty) field, so a length test never fires and an empty commit
+            # used to fall through to a bare "0 files" body line.
+            [[ -n ${diff_out[1]} ]] || return
             STAT_HAS_CHANGES=1
         fi
 

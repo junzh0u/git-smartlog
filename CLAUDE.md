@@ -17,7 +17,9 @@
 - `test/test-readme-examples.zsh` — replays every example in the README and
   diffs it against what the script prints now; `--update` re-captures them all.
   The README is the golden file, so there is no second copy to drift. Hashes
-  and relative timestamps are normalized away; everything else is exact.
+  and relative timestamps are normalized away; everything else is exact. The
+  shell half owns fixtures and env hygiene; the comparing lives in
+  `test/readme_examples.py` beside it.
 - `.github/workflows/ci.yml` — parses every script, then runs that test.
 - `dev/make-screenshots.zsh` — rebuilds the demo repo and regenerates every PNG in
   `screenshots/` (pty capture → ANSI-to-HTML → headless Chrome). Needs

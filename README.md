@@ -446,7 +446,7 @@ without it.
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/junzh0u/git-smartlog/master/git-smartlog \
+curl -fsSL https://raw.githubusercontent.com/junzh0u/git-smartlog/main/git-smartlog \
   -o ~/.local/bin/git-smartlog
 chmod +x ~/.local/bin/git-smartlog
 # optional: the same file doubles as `git smartstat` (see below)

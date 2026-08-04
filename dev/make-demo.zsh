@@ -326,7 +326,15 @@ func (p Policy) Wait(n int) {
 }
 EOF
 git add backoff.go retry.go
-commit $((now - 3*HOUR)) "Jun Zhou" "junz@example.com" "Add exponential backoff with jitter"
+# The one commit with a message BODY — what -m/--message renders (dim, under
+# the subject); every other commit stays subject-only, showing -m adds nothing
+# to them.
+commit $((now - 3*HOUR)) "Jun Zhou" "junz@example.com" "Add exponential backoff with jitter
+
+Full jitter: sleep a uniform random slice of the doubling window, so
+retries spread out instead of thundering in lockstep.
+
+Cap the window at 30s — past that the ceiling matters more than the base."
 # wip/backoff points at this interior draft — -b labels the draft (cyan) rather
 # than drawing a separate node.
 git branch wip/backoff

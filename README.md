@@ -118,6 +118,37 @@ $ git smartlog -f
 ~
 ```
 
+Subjects are one line by design; `-m` / `--message` brings in the rest of the
+message — body lines render dim under each subject, blank lines and all, above
+any `-c` stat body. It covers every commit in view; the exception is public
+commits compacted to metadata-only, which stay that way (`-f` un-compacts them,
+bodies included). Here only the middle draft carries a body, which is the point
+— the flag costs nothing on one-line commits:
+
+<!-- fixture: demo-clean -->
+```text
+$ git smartlog -m
+  @  2f0e95dfc5  14 minutes ago  junz  feat/retry-backoff*
+  │  Wire backoff into the HTTP client
+  │
+  o  6660e2b318  Today at 20:10  junz
+  │  Add exponential backoff with jitter
+  │  Full jitter: sleep a uniform random slice of the doubling window, so
+  │  retries spread out instead of thundering in lockstep.
+  │
+  │  Cap the window at 30s — past that the ceiling matters more than the base.
+  │
+  o  859711ce71  Today at 18:10  junz
+  │  (empty) Require golang.org/x/time
+  │
+  o  0280c2f0a8  Yesterday at 23:10  junz
+╭─╯  Extract retry policy into its own module
+│
+◆  9126f994b8  Thursday at 23:10  junz  origin/master
+│  Bump dependencies
+~
+```
+
 A synthetic **Uncommitted changes** node is drawn on top of `HEAD` whenever the
 working tree is dirty — no flag needed. It's one line: compact totals from
 `git diff --stat HEAD`, so a dirty tree costs the graph a single row no matter
@@ -479,13 +510,13 @@ directory, repeats composing — so you can point them at a repo without leaving
 the one you're in.
 
 ```
-usage: git-smartlog [-C <path>] [-c] [-b] [-f] [-p|-P] [--base REV]
+usage: git-smartlog [-C <path>] [-c] [-b] [-f] [-m] [-p|-P] [--base REV]
 
 Sapling-inspired smartlog using only git: the current branch's draft stack
 drawn on top of its nearest public (pushed) base. A dirty working tree always
 draws an "Uncommitted changes" node on top of HEAD, carrying its totals.
 
-The three view flags below are independent and combine freely.
+The view flags below are independent and combine freely.
 
   -c, --changes       show per-file changes under every commit in the current
                       stack — or under the public commit in view when HEAD
@@ -501,6 +532,9 @@ The three view flags below are independent and combine freely.
                       git log — and stop capping a submodule entry's sub-lines
                       at 10 (-b's ╷ elision stays — it keeps distant fork
                       points adjacent, which is the point of that view)
+  -m, --message       show full commit messages: body lines render dim under
+                      each subject — every commit in view, except public
+                      commits compacted to metadata-only (lift with -f)
   -p, --prs           tag shown branch names that have a GitHub PR with its
                       "#N" — colored by PR state, hyperlinked on a TTY
                       (needs the gh CLI); sticky — remembered per repo, so
@@ -680,7 +714,16 @@ empty tree so staged and untracked files still show as additions.)
   When tagging is on only via the marker, a missing `gh` warns instead of
   erroring, so plain runs keep working on a machine without it.
 - **Subjects** — shown in full, never truncated to the terminal width, so a
-  long one wraps rather than ending in an ellipsis.
+  long one wraps rather than ending in an ellipsis. On a TTY the wrap is the
+  renderer's own: word-boundary continuation rows that keep the gutter and
+  align under the subject column. Piped output leaves the line whole.
+- **Message bodies** — with `-m`/`--message`, each commit's message body
+  renders dim line-by-line under its subject, above any `-c` stat body. Long
+  lines word-wrap to the terminal width, continuation rows keeping the gutter
+  and the line's leading indent; piped output stays unwrapped. The
+  window's bodies come from one extra batched `git log` pass (NUL-separated —
+  bodies are multi-line); the `-f` streamed tail fetches one body per row,
+  lazily, like its `-c` stats.
 - **Color** — ANSI, automatically suppressed when stdout isn't a TTY or `NO_COLOR`
   is set.
 - **Paging** — output taller than the terminal is piped through a pager

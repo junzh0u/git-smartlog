@@ -39,7 +39,10 @@
 #     bends ╭─╯ off a dotted-or-empty spine but forks ├─╯ off a solid one. When
 #     the tree is dirty the wdir node draws directly above HEAD at HEAD's depth.
 #   - Long subjects are shown in full — never truncated to the terminal width,
-#     so a long one wraps instead of ending in an ellipsis.
+#     so a long one wraps instead of ending in an ellipsis. On a TTY the wrap
+#     is the renderer's own (print_subject): word-boundary rows that keep the
+#     gutter and align under the subject column. Piped there is no width to
+#     wrap to, so the line stays whole — and captures stay stable.
 #   - Uncommitted changes are always shown: a dirty working tree draws a
 #     synthetic node on top of HEAD, one line carrying its totals (-c adds the
 #     per-file body, see Format below). Borrowed from jj, which treats the
@@ -47,6 +50,8 @@
 #   - Optional full headers: with -f/--full, every commit shows its author and
 #     subject — including public commits by other people, which render
 #     metadata-only by default.
+#   - Optional message bodies: with -m/--message, every commit's message body
+#     renders dim under its subject — see Format below.
 #
 # Layout
 #   - Public base: the nearest public ancestor of HEAD. Candidate trunks are
@@ -166,6 +171,17 @@
 #     view instead (pair with -f to walk back through history). Bodies share
 #     the wdir node's format, markers and colors ('?'/U can't occur in a
 #     committed diff); an empty commit gets no body.
+#   - Message body (opt-in via -m/--message): the commit message past its
+#     subject, rendered dim line-by-line under the subject row — blank lines
+#     kept as bare spine rows — above any -c stat body. Long lines word-wrap
+#     to the terminal width, continuation rows keeping the gutter and the
+#     line's leading indent (piped output stays unwrapped — see
+#     print_commit_msg). Covers every commit in
+#     view (drafts, -b trees, publics); a compacted public row stays
+#     metadata-only (pair with -f to lift that). The window's bodies come from
+#     one batched NUL-separated `git log` pass (bodies are multi-line, so the
+#     \x1f-per-line metadata parse can't carry them); the -f streamed tail
+#     fetches one body per row instead — lazy, like its -c stats.
 #   - Author: %al (email local-part, e.g. "junz")
 #   - Refs: %D filtered to remote bookmarks plus the active local branch, shown
 #     with a trailing "*" like sapling's active bookmark — but only when no remote
@@ -343,13 +359,13 @@ function cd_toplevel {
 }
 
 function smartlog_usage {
-    print -r -- "usage: $PROG [-C <path>] [-c] [-b] [-f] [-p|-P] [--base REV]
+    print -r -- "usage: $PROG [-C <path>] [-c] [-b] [-f] [-m] [-p|-P] [--base REV]
 
 Sapling-inspired smartlog using only git: the current branch's draft stack
 drawn on top of its nearest public (pushed) base. A dirty working tree always
 draws an \"Uncommitted changes\" node on top of HEAD, carrying its totals.
 
-The three view flags below are independent and combine freely.
+The view flags below are independent and combine freely.
 
   -c, --changes       show per-file changes under every commit in the current
                       stack — or under the public commit in view when HEAD
@@ -365,6 +381,9 @@ The three view flags below are independent and combine freely.
                       git log — and stop capping a submodule entry's sub-lines
                       at 10 (-b's ╷ elision stays — it keeps distant fork
                       points adjacent, which is the point of that view)
+  -m, --message       show full commit messages: body lines render dim under
+                      each subject — every commit in view, except public
+                      commits compacted to metadata-only (lift with -f)
   -p, --prs           tag shown branch names that have a GitHub PR with its
                       \"#N\" — colored by PR state, hyperlinked on a TTY
                       (needs the gh CLI); sticky — remembered per repo, so
@@ -523,21 +542,6 @@ function draft_node {
         REPLY=◇
     else
         REPLY=o
-    fi
-}
-
-function empty_tag {
-    # REPLY = a dim "(empty) " prefix for commit $1's subject when the commit
-    # changed nothing against its first parent, "" otherwise. Borrowed from jj,
-    # which labels these in its log. They're worth a word: a commit whose
-    # changes landed upstream some other way comes back from a rebase emptied,
-    # and is otherwise indistinguishable from one still carrying work. Unlike
-    # the dimmed hash tail this has to survive NO_COLOR, so it's text, not
-    # color. Reads main's is_empty map via dynamic scoping.
-    if [[ -n ${is_empty[$1]:-} ]]; then
-        REPLY="${C_DIM}(empty)${C_RESET} "
-    else
-        REPLY=
     fi
 }
 
@@ -1271,16 +1275,6 @@ function subtree_epoch {
     REPLY=$best
 }
 
-function draft_subject {
-    # REPLY = "  subject" for draft commit $1, in HEAD-text color when $1 is
-    # HEAD (and the @ hasn't moved to a wdir node).
-    local c=$1
-    local tc=
-    [[ $c == $head_sha ]] && (( ! has_changes )) && tc=$C_HEAD_TEXT
-    empty_tag $c
-    REPLY="  ${REPLY}${tc}${subjects[${midx[$c]}]}${tc:+$C_RESET}"
-}
-
 function print_commit_stat {
     # Print the -c per-file stat body registered for commit $1 (if any)
     # directly under its subject row. $2 = the spine prefix carrying that
@@ -1292,6 +1286,116 @@ function print_commit_stat {
     for line in ${(f)lines}; do
         print -r -- "$2 ${line}"
     done
+}
+
+function wrap_line {
+    # reply = $1 greedy-word-wrapped to $2 display cells, continuation rows
+    # keeping $1's leading-space indent. All widths in display cells ((m) —
+    # CJK chars are 2 cells each). A single word past the width overflows
+    # rather than splitting mid-word; runs of spaces inside a wrapped line
+    # collapse. $2 <= 0 (no terminal to fit), or a line that already fits,
+    # comes back whole and verbatim.
+    local line=$1
+    local -i width=$2
+    reply=("$line")
+    (( width <= 0 || ${(m)#line} <= width )) && return
+    local lead=${line%%[! ]*} cur= w=
+    reply=()
+    cur=$lead
+    for w in ${(s: :)${line#"$lead"}}; do
+        if [[ $cur == "$lead" ]]; then
+            cur+=$w
+        elif (( ${(m)#cur} + 1 + ${(m)#w} <= width )); then
+            cur+=" $w"
+        else
+            reply+=("$cur")
+            cur="$lead$w"
+        fi
+    done
+    reply+=("$cur")
+}
+
+function print_subject {
+    # Print commit $1's subject row — rows, plural, when it word-wraps. $2 =
+    # its index into the metadata arrays (midx for the planned window; the
+    # -f tail passes its own appended index), $3 = the first row's full
+    # prefix, which may end in a ╭─╯/├─╯ join bend, $4 = the spine prefix
+    # that carries $3's columns downward — padded here to $3's width so
+    # continuation text aligns under the subject column. Wrapping follows
+    # print_commit_msg (terminal width via term_cols, TTY only): unwrapped, a
+    # long subject overflows to column 0 and breaks the spine. Piped output
+    # stays unwrapped, so captures keep the historical "shown in full" shape.
+    # HEAD's subject keeps its text color (unless the @ moved to the wdir
+    # node); an empty commit's subject takes the dim "(empty)" tag — text,
+    # not color, so an emptied commit still says so under NO_COLOR (borrowed
+    # from jj) — which wraps like the text it is and re-dims on print.
+    # Reads main's metadata/C_* state via dynamic scoping.
+    local c=$1 first=$3 cont=$4
+    local -i i=$2
+    local tc=
+    [[ $c == $head_sha ]] && (( ! has_changes )) && tc=$C_HEAD_TEXT
+    local tag=
+    [[ -n ${is_empty[$c]:-} ]] && tag='(empty) '
+    local -i avail=0
+    if (( term_cols > 0 )); then
+        avail=$(( term_cols - ${(m)#first} - 2 ))
+        (( avail < 20 )) && avail=20
+    fi
+    wrap_line "${tag}${subjects[i]}" $avail
+    local -i pad=$(( ${(m)#first} - ${(m)#cont} ))
+    (( pad < 0 )) && pad=0
+    local contp="${cont}${(l:$pad:):-}"
+    local -i r=1
+    local row= body= rest=
+    for ((r = 1; r <= ${#reply}; r++)); do
+        row=${reply[r]}
+        if (( r == 1 )) && [[ -n $tag ]]; then
+            rest=${${row#\(empty\)}# }
+            body="${C_DIM}(empty)${C_RESET}"
+            [[ -n $rest ]] && body+=" ${tc}${rest}${tc:+$C_RESET}"
+        else
+            body="${tc}${row}${tc:+$C_RESET}"
+        fi
+        if (( r == 1 )); then
+            print -r -- "${first}  ${body}"
+        else
+            print -r -- "${contp}  ${body}"
+        fi
+    done
+}
+
+function print_commit_msg {
+    # Print the -m message body registered for commit $1 (if any) directly
+    # under its subject row, dim, aligned with the subject text. $2 = the
+    # spine prefix carrying that column downward; a blank body line keeps the
+    # bare spine. A line longer than the row word-wraps (wrap_line, at the
+    # width left of the prefix), continuation rows keeping the prefix and the
+    # line's own leading indent — unwrapped it would overflow to column 0 and
+    # break the spine. Piped output stays unwrapped — no terminal to fit, and
+    # captures stay stable. Reads main's commit_msgs via dynamic scoping;
+    # bodies are stored newline-joined with interior blank lines intact.
+    local lines=${commit_msgs[$1]:-}
+    [[ -z $lines ]] && return
+    # Columns left for text after the prefix and the 2-space subject indent.
+    local -i avail=0
+    if (( term_cols > 0 )); then
+        avail=$(( term_cols - ${(m)#2} - 2 ))
+        (( avail < 20 )) && avail=20
+    fi
+    local line= w=
+    for line in "${(@f)lines}"; do
+        if [[ -z $line ]]; then
+            print -r -- "$2"
+            continue
+        fi
+        wrap_line "$line" $avail
+        for w in $reply; do
+            print -r -- "$2  ${C_DIM}${w}${C_RESET}"
+        done
+    done
+    # A -c stat body directly below would run into the message — keep a bare
+    # spine row between them.
+    [[ -n ${commit_stats[$1]:-} ]] && print -r -- "$2"
 }
 
 function emit_subtree {
@@ -1344,23 +1448,24 @@ function emit_subtree {
             sides=(${sides:#$pick})
         done
         emit_subtree $spine_kid "$prefix"
-        draft_subject $spine_kid
-        print -r -- "${prefix}│${REPLY}"
+        print_subject $spine_kid ${midx[$spine_kid]} "${prefix}│" "${prefix}│"
+        print_commit_msg $spine_kid "${prefix}│"
         print_commit_stat $spine_kid "${prefix}│"
         print -r -- "${prefix}│"
         for k in $sorted; do
             emit_subtree $k "${prefix}│ "
-            draft_subject $k
-            # Same in-column rule as the stack's bottom draft: a stat body
-            # (and then its subject too) stays in the side column, closed by
-            # a bare ├─╯ bend. (Unreachable while -a scopes to the current
-            # branch — side subtrees are never on HEAD's path.)
-            if [[ -n ${commit_stats[$k]:-} ]]; then
-                print -r -- "${prefix}│ │${REPLY}"
+            # Same in-column rule as the stack's bottom draft: a stat or
+            # message body (and then its subject too) stays in the side
+            # column, closed by a bare ├─╯ bend. (-c can't reach this — it
+            # scopes to the current branch, and side subtrees are never on
+            # HEAD's path — but -m bodies land on any draft.)
+            if [[ -n ${commit_stats[$k]:-}${commit_msgs[$k]:-} ]]; then
+                print_subject $k ${midx[$k]} "${prefix}│ │" "${prefix}│ │"
+                print_commit_msg $k "${prefix}│ │"
                 print_commit_stat $k "${prefix}│ │"
                 print -r -- "${prefix}├─╯"
             else
-                print -r -- "${prefix}├─╯${REPLY}"
+                print_subject $k ${midx[$k]} "${prefix}├─╯" "${prefix}│"
             fi
             print -r -- "${prefix}│"
         done
@@ -1389,13 +1494,14 @@ function emit_subtree {
 function main {
     # Option parsing (zparseopts is a zsh builtin). Operates on main's own
     # positional params ("$@").
-    local -a ARG_FULL=() ARG_BASE=() ARG_CHANGES=() ARG_BRANCHES=() ARG_PRS=() ARG_NO_PRS=() ARG_CD=() ARG_HELP=()
+    local -a ARG_FULL=() ARG_BASE=() ARG_CHANGES=() ARG_BRANCHES=() ARG_MESSAGE=() ARG_PRS=() ARG_NO_PRS=() ARG_CD=() ARG_HELP=()
     zparseopts -D -E -- \
         C+:=ARG_CD \
         {f,-full}=ARG_FULL \
         -base:=ARG_BASE \
         {c,-changes}=ARG_CHANGES \
         {b,-branches}=ARG_BRANCHES \
+        {m,-message}=ARG_MESSAGE \
         {p,-prs}=ARG_PRS \
         {P,-no-prs}=ARG_NO_PRS \
         {h,-help}=ARG_HELP \
@@ -1419,6 +1525,10 @@ function main {
     (( ${#ARG_CHANGES} )) && show_changes=1
     local show_branches=0
     (( ${#ARG_BRANCHES} )) && show_branches=1
+    # -m adds each commit's message body under its subject — every commit in
+    # view, unlike -c's stat bodies, which scope to the current stack.
+    local show_message=0
+    (( ${#ARG_MESSAGE} )) && show_message=1
     # -f is the single "don't abbreviate anything" switch, covering every place
     # this renderer shortens what it has: the public column stops at the base
     # (streams on instead), a submodule entry folds its tail into "… +N more"
@@ -1849,6 +1959,39 @@ function main {
         commit_stats[$st_sha]=${(F)st_body}
     done
 
+    # -m: message bodies, drawn dim under the owning commit's subject by
+    # print_commit_msg. One batched fetch for the whole window — but a NUL-
+    # separated one (-z): bodies are multi-line, so the \x1f-per-line parse
+    # the metadata pass uses can't carry them. %b keeps its interior blank
+    # lines; only trailing newlines are trimmed ($(...) already strips the
+    # last record's, so trim the rest to match). The -f streamed tail can't
+    # be prefetched — emit_tail_row fills this map one row at a time.
+    local -A commit_msgs=()
+    if (( show_message )); then
+        local mrec= msha= mbody=
+        for mrec in ${(0)"$(git log --no-walk=unsorted -z --pretty=format:'%H%x1f%b' "${all_shas[@]}")"}; do
+            msha=${mrec%%$'\x1f'*}
+            mbody=${mrec#*$'\x1f'}
+            while [[ $mbody == *$'\n' ]]; do mbody=${mbody%$'\n'}; done
+            [[ -n $mbody ]] && commit_msgs[$msha]=$mbody
+        done
+    fi
+
+    # Terminal width for the word wrap in print_subject / print_commit_msg,
+    # probed once (a stty fork) rather than per row. Same probe as
+    # uncommitted_stat: the run_paged capture pipe hides the terminal, so ask
+    # the controlling tty. 0 = don't wrap (piped, or no terminal to ask).
+    local -i term_cols=0
+    if (( TTY_OUT )); then
+        local tsz=
+        tsz=$(stty size </dev/tty 2>/dev/null)   # "rows cols"
+        if [[ $tsz == <->" "<-> ]]; then
+            term_cols=${tsz##* }
+        elif [[ -n $COLUMNS ]] && (( COLUMNS >= 20 )); then
+            term_cols=$COLUMNS
+        fi
+    fi
+
     local n_drafts=${#drafts}
 
     # Render plan: walk the public column top-down. The current draft stack
@@ -1926,7 +2069,7 @@ function render_plan {
     # truncation marker, or the first spine row of the -f streamed-history
     # tail), which main appends. Reads main's plan/metadata/C_* state via
     # dynamic scoping, like the other render helpers.
-    local spine= el= g= join= symbol= text_color= subject_body= seg= pp= bh=
+    local spine= el= g= join= symbol= text_color= seg= pp= bh=
     local -i pl_i=0 pub_i=0 n_plan=${#plan} idx=0 di=0
     local is_compact=0
     for ((pl_i = 1; pl_i <= n_plan; pl_i++)); do
@@ -1971,26 +2114,26 @@ function render_plan {
                     text_color=$C_HEAD_TEXT
                 fi
                 commit_header $idx $symbol "$g" "$C_DRAFT_HASH" "$text_color" 0
-                empty_tag ${drafts[di]}
-                subject_body="  ${REPLY}${text_color}${subjects[idx]}${text_color:+$C_RESET}"
                 if (( di == n_drafts )); then
-                    # A stat body must stay in ITS commit's column: printed
-                    # after the ╭─╯ bend it would sit beside the public commit
-                    # below and read as THAT commit's changes. So when the
+                    # A stat or message body must stay in ITS commit's column:
+                    # printed after the ╭─╯ bend it would sit beside the public
+                    # commit below and read as THAT commit's. So when the
                     # bottom draft has one, keep its subject in-column too and
                     # close with a bare bend — the same shape the wdir node
                     # takes on a public HEAD.
-                    if [[ -n ${commit_stats[${drafts[di]}]:-} ]]; then
-                        print -r -- "${g}│${subject_body}"
+                    if [[ -n ${commit_stats[${drafts[di]}]:-}${commit_msgs[${drafts[di]}]:-} ]]; then
+                        print_subject ${drafts[di]} $idx "${g}│" "${g}│"
+                        print_commit_msg ${drafts[di]} "${g}│"
                         print_commit_stat ${drafts[di]} "${g}│"
                         print -r -- "$join"
                     else
-                        print -r -- "${join}${subject_body}"
+                        print_subject ${drafts[di]} $idx "$join" "│"
                     fi
                     print -r -- "│"
                     spine='│'
                 else
-                    print -r -- "${g}│${subject_body}"
+                    print_subject ${drafts[di]} $idx "${g}│" "${g}│"
+                    print_commit_msg ${drafts[di]} "${g}│"
                     print_commit_stat ${drafts[di]} "${g}│"
                     print -r -- "${g}│"
                 fi
@@ -2000,16 +2143,16 @@ function render_plan {
             # -b: a full draft tree above its fork-point public commit.
             bh=${el#tree:}
             emit_subtree $bh "$g"
-            draft_subject $bh
-            # Same in-column rule as the stack's bottom draft: a stat body
-            # (and then its subject too) stays in the tree's column, closed
-            # by a bare bend.
-            if [[ -n ${commit_stats[$bh]:-} ]]; then
-                print -r -- "${g}│${REPLY}"
+            # Same in-column rule as the stack's bottom draft: a stat or
+            # message body (and then its subject too) stays in the tree's
+            # column, closed by a bare bend.
+            if [[ -n ${commit_stats[$bh]:-}${commit_msgs[$bh]:-} ]]; then
+                print_subject $bh ${midx[$bh]} "${g}│" "${g}│"
+                print_commit_msg $bh "${g}│"
                 print_commit_stat $bh "${g}│"
                 print -r -- "$join"
             else
-                print -r -- "${join}${REPLY}"
+                print_subject $bh ${midx[$bh]} "$join" "│"
             fi
             print -r -- "│"
             spine='│'
@@ -2035,20 +2178,27 @@ function render_plan {
                 is_compact=1
             fi
             commit_header $idx $symbol '' "$C_PUBLIC_HASH" "$text_color" $is_compact
-            empty_tag $pp
-            subject_body="  ${REPLY}${text_color}${subjects[idx]}${text_color:+$C_RESET}"
-            (( is_compact )) && subject_body=
             if (( pl_i == n_plan )); then
                 # The final row below this ("~" or the -f tail's spine)
                 # belongs to main — see the render_plan call there.
-                print -r -- "│${subject_body}"
+                if (( is_compact )); then
+                    print -r -- "│"
+                else
+                    print_subject $pp $idx "│" "│"
+                    print_commit_msg $pp "│"
+                fi
                 print_commit_stat $pp "│"
             else
                 # Segment down to the next shown public: solid when it's a
                 # parent of this commit, dotted ╷ when commits are elided.
                 seg='╷'
                 [[ " ${parents[idx]} " == *" ${publics[pub_i+1]} "* ]] && seg='│'
-                print -r -- "${seg}${subject_body}"
+                if (( is_compact )); then
+                    print -r -- "$seg"
+                else
+                    print_subject $pp $idx "$seg" "$seg"
+                    print_commit_msg $pp "$seg"
+                fi
                 print_commit_stat $pp "$seg"
                 print -r -- "$seg"
                 spine=$seg
@@ -2123,11 +2273,22 @@ function emit_tail_row {
             commit_stats[$fsha]=${(F)st_body}
         fi
     fi
+    # -m body, fetched lazily one row at a time — the tail streams unbounded,
+    # so main's batched prefetch can't cover it. Same per-row cost model as
+    # the -c stat above; skipped for compact rows, which show no subject to
+    # hang a body under.
+    if (( show_message && ! is_compact )); then
+        local mbody=
+        mbody=$(git log -1 --pretty=format:%b $fsha 2>/dev/null)
+        [[ -n $mbody ]] && commit_msgs[$fsha]=$mbody
+    fi
     commit_header $idx ◆ '' "$C_PUBLIC_HASH" '' $is_compact
-    empty_tag $fsha
-    local subject_body="  ${REPLY}${subjects[idx]}"
-    (( is_compact )) && subject_body=
-    print -r -- "│${subject_body}"
+    if (( is_compact )); then
+        print -r -- "│"
+    else
+        print_subject $fsha $idx "│" "│"
+        print_commit_msg $fsha "│"
+    fi
     print_commit_stat $fsha "│"
     if [[ -n $p ]]; then
         print -r -- "│"

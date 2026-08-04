@@ -466,6 +466,12 @@ typeset -ga STAT_BODY
 # submodule triggers, so -f uncaps all the way down.
 typeset -g SUBLINE_CAP=10
 
+# Row cap for -f's streamed-history tail, 0 = unlimited. Stays 0 on the paged
+# path, where pipe backpressure already bounds the walk; the TUI sets it
+# because it captures a render whole, and an uncapped -f capture would walk
+# first-parent history to the root commit before the first frame draws.
+typeset -gi TAIL_CAP=0
+
 # Whether uncommitted_stat should build STAT_BODY at all. main clears it for the
 # wdir node when -c is absent — the header's summary is all that renders then,
 # and everything past it (markers, colors, sorting, and the per-submodule forks
@@ -2103,9 +2109,20 @@ function stream_public_tail {
         --pretty=tformat:'%H%x1f%h%x1f%T%x1f%at%x1f%al%x1f%ae%x1f%D%x1f%P%x1f%s' \
         "${from}^" 2>/dev/null |
     {
+        local -i emitted=0
         while IFS=$'\x1f' read -r fsha h t e a ae r p s; do
             [[ -z $fsha ]] && continue
-            (( ${#pend} )) && emit_tail_row "$t" "${pend[@]}"
+            (( ${#pend} )) && { emit_tail_row "$t" "${pend[@]}"; (( emitted += 1 )) }
+            if (( TAIL_CAP && emitted >= TAIL_CAP )); then
+                # Cap reached: close with the ╷ elision ("commits jumped
+                # over"), NOT "~" — the root was never reached, so "~" would
+                # be false. Dropping pend suppresses the root flush below;
+                # breaking lets git log die of SIGPIPE on its next write, the
+                # same way a pager quit already ends this walk.
+                print -r -- "╷"
+                pend=()
+                break
+            fi
             pend=("$fsha" "$h" "$t" "$e" "$a" "$ae" "$r" "$p" "$s")
         done
         # git log ran out, so the held row is the root commit (or a shallow

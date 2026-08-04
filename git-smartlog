@@ -343,7 +343,7 @@ function cd_toplevel {
 }
 
 function smartlog_usage {
-    print -r -- "usage: $PROG [-C <path>] [-c] [-b] [-f] [-p|-P] [--base REV]
+    print -r -- "usage: $PROG [-C <path>] [-c] [-b] [-f] [-p|-P] [-i] [--base REV]
 
 Sapling-inspired smartlog using only git: the current branch's draft stack
 drawn on top of its nearest public (pushed) base. A dirty working tree always
@@ -371,6 +371,14 @@ The three view flags below are independent and combine freely.
                       later runs tag PRs without the flag
   -P, --no-prs        turn PR tagging off and forget the remembered -p
                       (wins when both are given)
+  -i, --interactive   full-screen view with live keys: c/b/f/p flip the flags
+                      above (p without touching the sticky marker), j/k, d/u,
+                      g/G and the arrow/page keys scroll, r refreshes, q
+                      quits — views you've already visited repaint instantly.
+                      Falls back to the plain output when stdout is not a
+                      terminal. -f's streamed history renders capped at 200
+                      rows here (\$GIT_SMARTLOG_TUI_TAIL overrides), ending
+                      in ╷
       --base REV      override the public base (default: nearest remote trunk, e.g.
                       origin/HEAD, origin/main, origin/master, upstream/main) —
                       needed for any other trunk, e.g. develop or release/2.x.
@@ -381,7 +389,8 @@ The three view flags below are independent and combine freely.
   -h, --help          show this help and exit
 
 Output taller than the terminal is paged (\$GIT_PAGER / core.pager / \$PAGER /
-less; GIT_PAGER=cat disables paging)."
+less; GIT_PAGER=cat disables paging); -i takes over the screen instead of
+paging."
 }
 
 function smartstat_usage {

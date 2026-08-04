@@ -418,6 +418,20 @@ passed, later runs keep tagging without it until `-P` / `--no-prs` turns it
 off. The cover image up top shows the tags in all four states on the `-b`
 view.
 
+With `-i` / `--interactive` the smartlog takes over the screen instead of
+paging, and the view flags become keys: `c`, `b`, `f` and `p` flip their flags
+live (`p` without touching the sticky marker — the keypress is for this
+session only), `j`/`k`, `d`/`u`, `g`/`G` and the arrow/page keys scroll, `r`
+re-reads the repo, `q` quits. Each flag combination is rendered once and
+remembered, so toggling back to a view you've already seen repaints
+instantly. The status line names the keys, so there's nothing to memorize.
+Two departures from the flag semantics, both because the interactive view
+captures a render whole instead of streaming it: `-f`'s public history is
+capped at 200 rows (`GIT_SMARTLOG_TUI_TAIL` overrides) and closes with the
+`╷` elision, and a render that fails — `p` on a machine without `gh`, say —
+reports in the status line and reverts the toggle rather than exiting.
+Without a terminal on stdout, `-i` quietly falls back to the plain output.
+
 In a real terminal the output is colorized — draft hashes in bold yellow,
 `HEAD`'s line in magenta, remote refs in green, `-b` branch names in cyan, and
 every hash dim past its unique prefix. ANSI is suppressed when stdout
@@ -479,7 +493,7 @@ directory, repeats composing — so you can point them at a repo without leaving
 the one you're in.
 
 ```
-usage: git-smartlog [-C <path>] [-c] [-b] [-f] [-p|-P] [--base REV]
+usage: git-smartlog [-C <path>] [-c] [-b] [-f] [-p|-P] [-i] [--base REV]
 
 Sapling-inspired smartlog using only git: the current branch's draft stack
 drawn on top of its nearest public (pushed) base. A dirty working tree always
@@ -507,6 +521,14 @@ The three view flags below are independent and combine freely.
                       later runs tag PRs without the flag
   -P, --no-prs        turn PR tagging off and forget the remembered -p
                       (wins when both are given)
+  -i, --interactive   full-screen view with live keys: c/b/f/p flip the flags
+                      above (p without touching the sticky marker), j/k, d/u,
+                      g/G and the arrow/page keys scroll, r refreshes, q
+                      quits — views you've already visited repaint instantly.
+                      Falls back to the plain output when stdout is not a
+                      terminal. -f's streamed history renders capped at 200
+                      rows here ($GIT_SMARTLOG_TUI_TAIL overrides), ending
+                      in ╷
       --base REV      override the public base (default: nearest remote trunk, e.g.
                       origin/HEAD, origin/main, origin/master, upstream/main) —
                       needed for any other trunk, e.g. develop or release/2.x.
@@ -517,7 +539,8 @@ The three view flags below are independent and combine freely.
   -h, --help          show this help and exit
 
 Output taller than the terminal is paged ($GIT_PAGER / core.pager / $PAGER /
-less; GIT_PAGER=cat disables paging).
+less; GIT_PAGER=cat disables paging); -i takes over the screen instead of
+paging.
 ```
 
 ## git-smartstat

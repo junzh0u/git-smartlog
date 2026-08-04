@@ -28,6 +28,7 @@ _git-smartlog() {
         '(-f --full)'{-f,--full}'[abbreviate nothing: full headers, streaming history, uncapped submodule sub-lines]' \
         '(-p --prs -P --no-prs)'{-p,--prs}'[tag shown branch names with their GitHub PR number (needs gh); sticky per repo]' \
         '(-P --no-prs -p --prs)'{-P,--no-prs}'[turn PR tagging off and forget the remembered -p]' \
+        '(-i --interactive)'{-i,--interactive}'[full-screen view: c/b/f/p toggle the flags live, j/k scroll, r refresh, q quit]' \
         '--base=[override the public base (default: nearest remote trunk)]:revision:_git-smartlog_base' \
         '*-C+[run as if started in <path>, like git'\''s own -C]:directory:_directories' \
         '(- *)'{-h,--help}'[show help and exit]'

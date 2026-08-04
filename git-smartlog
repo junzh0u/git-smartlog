@@ -472,6 +472,13 @@ typeset -g SUBLINE_CAP=10
 # first-parent history to the root commit before the first frame draws.
 typeset -gi TAIL_CAP=0
 
+# Interactive-mode state (see smartlog_tui). TUI_ACTIVE guards tui_restore so
+# the teardown is idempotent across its several triggers (q, EXIT trap,
+# signal traps); TUI_ERRF is the stderr capture file tui_restore must clean
+# up on any exit.
+typeset -gi TUI_ACTIVE=0
+typeset -g TUI_ERRF=
+
 # Whether uncommitted_stat should build STAT_BODY at all. main clears it for the
 # wdir node when -c is absent — the header's summary is all that renders then,
 # and everything past it (markers, colors, sorting, and the per-submodule forks
@@ -1395,7 +1402,7 @@ function emit_subtree {
 function main {
     # Option parsing (zparseopts is a zsh builtin). Operates on main's own
     # positional params ("$@").
-    local -a ARG_FULL=() ARG_BASE=() ARG_CHANGES=() ARG_BRANCHES=() ARG_PRS=() ARG_NO_PRS=() ARG_CD=() ARG_HELP=()
+    local -a ARG_FULL=() ARG_BASE=() ARG_CHANGES=() ARG_BRANCHES=() ARG_PRS=() ARG_NO_PRS=() ARG_INTERACTIVE=() ARG_CD=() ARG_HELP=()
     zparseopts -D -E -- \
         C+:=ARG_CD \
         {f,-full}=ARG_FULL \
@@ -1404,6 +1411,7 @@ function main {
         {b,-branches}=ARG_BRANCHES \
         {p,-prs}=ARG_PRS \
         {P,-no-prs}=ARG_NO_PRS \
+        {i,-interactive}=ARG_INTERACTIVE \
         {h,-help}=ARG_HELP \
         || { smartlog_usage >&2; exit 2; }
     (( ${#ARG_HELP} )) && { smartlog_usage; exit 0; }
@@ -1461,7 +1469,17 @@ function main {
     local base_arg=
     (( ${#ARG_BASE} > 0 )) && base_arg=${ARG_BASE[-1]}
 
-    run_paged smartlog_render
+    # -i needs a terminal on stdout AND a readable /dev/tty for keys; without
+    # either it silently degrades to the plain paged render, the same way
+    # run_paged itself declines to page a pipe — so a scripted or captured
+    # `git smartlog -i` is just `git smartlog`.
+    local interactive=0
+    (( ${#ARG_INTERACTIVE} )) && interactive=1
+    if (( interactive && TTY_OUT )) && { : <>/dev/tty; } 2>/dev/null; then
+        smartlog_tui
+    else
+        run_paged smartlog_render
+    fi
 }
 
 function smartlog_render {
@@ -2127,8 +2145,12 @@ function stream_public_tail {
         done
         # git log ran out, so the held row is the root commit (or a shallow
         # clone's graft, which has a parent we can't see and so never reads as
-        # empty). Its parent tree is the empty tree.
-        (( ${#pend} )) && emit_tail_row "$(git hash-object -t tree /dev/null)" "${pend[@]}"
+        # empty). Its parent tree is the empty tree. A real `if`, not `&& `:
+        # a capped walk arrives here with pend empty, and this is the block's
+        # last command — a failing (( 0 )) would fail the whole pipeline.
+        if (( ${#pend} )); then
+            emit_tail_row "$(git hash-object -t tree /dev/null)" "${pend[@]}"
+        fi
     }
 }
 
@@ -2272,6 +2294,266 @@ function run_paged {
     rc=$?
     (( rc == 141 )) && rc=0
     return $rc
+}
+
+# ── Interactive mode (-i) ───────────────────────────────────────────────────
+# A full-screen view over smartlog_render: c/b/f/p flip the view flags live,
+# j/k & friends scroll, r refreshes, q quits. The loop runs in the main shell;
+# only the renders fork — each is captured in a $(...) so a die inside can't
+# take the screen down (see tui_render).
+
+function tui_restore {
+    # Leave the terminal exactly as found: cursor on, autowrap on, main
+    # screen, cooked mode ($1 = the `stty -g` state saved on entry).
+    # Idempotent via TUI_ACTIVE — it can fire from the q path, smartlog_tui's
+    # function-scoped EXIT trap, and a signal, in any order.
+    (( TUI_ACTIVE )) || return 0
+    TUI_ACTIVE=0
+    print -n -- $'\e[?25h\e[?7h\e[?1049l'
+    [[ -n ${1:-} ]] && stty "$1" </dev/tty 2>/dev/null
+    [[ -n $TUI_ERRF ]] && rm -f -- "$TUI_ERRF" 2>/dev/null
+    return 0
+}
+
+function tui_readkey {
+    # One keypress from /dev/tty into REPLY — or REPLY=resize when the
+    # terminal changed size. Nonzero only when the tty itself is gone.
+    # A timed poll, and that is load-bearing: SIGWINCH does NOT survive
+    # read -k — zsh discards it around raw terminal reads (verified
+    # empirically: neither a flag-raising TRAPWINCH, an in-trap repaint,
+    # nor $LINES/$COLUMNS sees a resize while these reads run, though INT
+    # does get through) — so the size is polled on each timeout instead of
+    # trusted to the signal.
+    local k= seq= ch= termsize=
+    while ! read -sk1 -t 0.2 k </dev/tty; do
+        { : <>/dev/tty; } 2>/dev/null || return 1
+        termsize=$(stty size </dev/tty 2>/dev/null)
+        if [[ $termsize == <->" "<-> ]] &&
+           (( ${termsize%% *} != rows || ${termsize##* } != cols )); then
+            REPLY=resize
+            return 0
+        fi
+    done
+    if [[ $k != $'\e' ]]; then
+        REPLY=$k
+        return 0
+    fi
+    # A lone Esc and the first byte of a sequence look identical; a 20ms
+    # window tells them apart (a terminal sends the whole sequence at once).
+    read -sk1 -t 0.02 ch </dev/tty || { REPLY=esc; return 0 }
+    seq=$ch
+    if [[ $ch == '[' || $ch == O ]]; then
+        while read -sk1 -t 0.02 ch </dev/tty; do
+            seq+=$ch
+            [[ $ch == [A-Za-z~] ]] && break   # CSI final byte
+        done
+    fi
+    case $seq in
+        '[A'|OA)       REPLY=up ;;
+        '[B'|OB)       REPLY=down ;;
+        '[5~')         REPLY=pgup ;;
+        '[6~')         REPLY=pgdn ;;
+        '[H'|OH|'[1~') REPLY=home ;;
+        '[F'|OF|'[4~') REPLY=end ;;
+        *)             REPLY=other ;;
+    esac
+    return 0
+}
+
+function tui_render {
+    # Fill buf with the render for the CURRENT flag tuple, memoized in cache
+    # so toggling back to a seen tuple repaints instantly (r empties the
+    # memo). smartlog_render runs inside $(...) deliberately: die's `exit`
+    # kills only that subshell — the exit-inside-$() gotcha used as a sandbox
+    # — so a failing toggle (--prs without gh, a base gone stale) lands its
+    # first stderr line in msg instead of killing the screen. Reads and
+    # writes smartlog_tui's locals (cache, buf, msg) and main's flag booleans
+    # via dynamic scope.
+    local key="$show_changes$show_branches$full$show_prs"
+    msg=
+    if [[ -z ${cache[$key]-} ]]; then
+        local out= err= rc=0
+        out=$(smartlog_render 2>| "$TUI_ERRF")
+        rc=$?
+        err=$(<"$TUI_ERRF")
+        if (( rc )); then
+            msg=${${err:-render failed}%%$'\n'*}
+            return 1
+        fi
+        cache[$key]=$out
+        [[ -n $err ]] && msg=${err%%$'\n'*}   # non-fatal warnings still show
+    fi
+    buf=("${(@f)cache[$key]}")
+    return 0
+}
+
+function tui_draw {
+    # Repaint: home, one buffer line per row, clear the rest, status line on
+    # the bottom row, all in one write. No manual truncation — autowrap is
+    # off (\e[?7l), so the terminal clips overlong lines at the right edge
+    # while still PROCESSING escape sequences past it: a clipped line can't
+    # bleed color or leave an OSC-8 hyperlink open, which byte-wise cutting
+    # couldn't guarantee (it would split multibyte glyphs and OSC payloads).
+    # Each row starts with \e[K so stale longer lines from the previous
+    # frame can't show through.
+    local -i view=$(( rows - 1 )) i=0
+    (( view < 1 )) && view=1
+    local frame=$'\e[H'
+    for (( i = top; i < top + view && i <= ${#buf}; i++ )); do
+        frame+=$'\e[K'"${buf[$i]}"$'\r\n'
+    done
+    frame+=$'\e[J'
+    local -i last=$(( top + view - 1 ))
+    (( last > ${#buf} )) && last=${#buf}
+    # Status line: flag states (● on, ○ off, on-flags bold), scroll position,
+    # key hints — or the pending message, which stays until the next key.
+    local -a segs=()
+    local seg=
+    for seg in "c:changes:$show_changes" "b:branches:$show_branches" \
+               "f:full:$full" "p:prs:$show_prs"; do
+        local -a parts=(${(s.:.)seg})
+        if (( parts[3] )); then
+            segs+=($'\e[1m'"${parts[1]}:${parts[2]} ●"$'\e[22m')
+        else
+            segs+=("${parts[1]}:${parts[2]} ○")
+        fi
+    done
+    local hints="j/k scroll  d/u page  g/G ends  r refresh  q quit"
+    [[ -n $msg ]] && hints=$msg
+    frame+=$'\e['"${rows};1H"$'\e[7m'" ${(j.  .)segs}  $top–$last/${#buf}  $hints"$'\e[m\e[K'
+    print -n -- "$frame"
+}
+
+function smartlog_tui {
+    # The interactive loop. Entry order matters:
+    #   1. the first render happens BEFORE the alternate screen, so a bad
+    #      --base or "Nothing to display" fails exactly like plain mode
+    #      instead of flashing an empty TUI;
+    #   2. raw mode is set ONCE for the session — read -sk restores cooked
+    #      mode between calls, so keys typed during a ~1s render would
+    #      otherwise echo garbage onto the frame;
+    #   3. teardown is a function-scoped EXIT trap (zsh fires it when this
+    #      function returns — the q path and any fall-through) plus signal
+    #      traps that restore and exit ON THE SPOT: a trap that merely
+    #      raised a flag would return into a silently restarted read, and
+    #      the flag would sit unread until the next key.
+    TAIL_CAP=${GIT_SMARTLOG_TUI_TAIL:-200}
+    # Shadow main's prs_explicit so the p key can flip it session-local (a
+    # toggle without gh should die into the status line, not warn), while
+    # marker-driven PR tagging keeps its warn-and-carry-on entry behavior.
+    local prs_explicit=$prs_explicit
+    local -A cache=()
+    local -a buf=()
+    local msg=
+    TUI_ERRF=$(git rev-parse --git-path "smartlog-tui-err.$$")
+    # Sweep err files whose owner died uncleanly (SIGKILL outruns every
+    # trap); the pid suffix says whose files are safe to take.
+    local stale=
+    for stale in ${TUI_ERRF:h}/smartlog-tui-err.<->(N); do
+        kill -0 ${stale##*.} 2>/dev/null || rm -f -- "$stale" 2>/dev/null
+    done
+
+    if ! tui_render; then
+        print -ru2 -- "${msg:-$PROG: render failed}"
+        rm -f -- "$TUI_ERRF" 2>/dev/null
+        return 1
+    fi
+
+    local -i rows=24 cols=80 top=1
+    local termsize=
+    termsize=$(stty size </dev/tty 2>/dev/null)
+    if [[ $termsize == <->" "<-> ]]; then
+        rows=${termsize%% *} cols=${termsize##* }
+    fi
+
+    local saved_stty=
+    saved_stty=$(stty -g </dev/tty 2>/dev/null)
+    trap 'tui_restore "$saved_stty"' EXIT
+    # read -k runs in cbreak, not raw — ISIG stays on, so ^C really arrives
+    # as SIGINT. Restore-and-exit right here; the EXIT trap that follows is
+    # a no-op thanks to tui_restore's TUI_ACTIVE guard.
+    trap 'tui_restore "$saved_stty"; exit 130' INT
+    trap 'tui_restore "$saved_stty"; exit 143' TERM HUP
+    stty -echo -icanon min 1 time 0 </dev/tty 2>/dev/null
+    print -n -- $'\e[?1049h\e[?7l\e[?25l'
+    TUI_ACTIVE=1
+
+    local -i view=0 maxtop=0 was=0
+    while true; do
+        view=$(( rows - 1 ))
+        (( view < 1 )) && view=1
+        maxtop=$(( ${#buf} - view + 1 ))
+        (( maxtop < 1 )) && maxtop=1
+        (( top > maxtop )) && top=$maxtop
+        (( top < 1 )) && top=1
+        tui_draw
+        # Only a dead tty fails the poll (INT/TERM restore-and-exit in
+        # their traps; a resize comes back as a key) — leave cleanly.
+        tui_readkey || break
+        msg=
+        case $REPLY in
+            # ^C normally arrives as SIGINT (the INT trap above); the ^C/^D
+            # byte forms only reach here if something upstream turned ISIG
+            # off — cheap insurance against an unquittable screen.
+            q|Q|$'\x03'|$'\x04') break ;;
+            c|b|f|p)
+                case $REPLY in
+                    c) was=$show_changes; show_changes=$(( ! was )) ;;
+                    b) was=$show_branches; show_branches=$(( ! was )) ;;
+                    f) was=$full; full=$(( ! was )) ;;
+                    p) was=$show_prs; show_prs=$(( ! was )); prs_explicit=1 ;;
+                esac
+                if [[ -z ${cache[$show_changes$show_branches$full$show_prs]-} ]]; then
+                    msg="rendering…"
+                    tui_draw
+                fi
+                if tui_render; then
+                    top=1   # a different view is a different document
+                else
+                    # Revert the flip so the view matches the flags again;
+                    # the failure text stays in msg for the next draw.
+                    case $REPLY in
+                        c) show_changes=$was ;;
+                        b) show_branches=$was ;;
+                        f) full=$was ;;
+                        p) show_prs=$was ;;
+                    esac
+                fi
+                ;;
+            r)
+                cache=()
+                msg="rendering…"
+                tui_draw
+                tui_render
+                ;;
+            resize)
+                termsize=$(stty size </dev/tty 2>/dev/null)
+                if [[ $termsize == <->" "<-> ]]; then
+                    rows=${termsize%% *}
+                    if (( ${termsize##* } != cols )); then
+                        # Stat bodies bake the width in at render time — a
+                        # width change invalidates every cached render.
+                        cols=${termsize##* }
+                        cache=()
+                        tui_render
+                    fi
+                fi
+                ;;
+            j|down)   top=$(( top + 1 )) ;;
+            k|up)     top=$(( top - 1 )) ;;
+            d)        top=$(( top + view / 2 )) ;;
+            u)        top=$(( top - view / 2 )) ;;
+            ' '|pgdn) top=$(( top + view )) ;;
+            pgup)     top=$(( top - view )) ;;
+            g|home)   top=1 ;;
+            # ${#buf}, not maxtop — an in-trap resize can stale maxtop, and
+            # the loop-top clamp brings this back into range either way.
+            G|end)    top=${#buf} ;;
+        esac
+    done
+
+    tui_restore "$saved_stty"
+    return 0
 }
 
 # Multi-call dispatch on the invocation name: git-smartstat runs only the stat

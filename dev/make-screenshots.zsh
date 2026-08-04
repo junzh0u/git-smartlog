@@ -9,7 +9,7 @@
 #    colorizes; GIT_PAGER=cat keeps the pager out of the capture.
 # 3. Converts the ANSI capture to HTML (embedded python), styled to match the
 #    terminal the originals were shot in: Dracula palette on #282a36, MesloLGS
-#    NF, with a green `❯ <command>` prompt line on top.
+#    Nerd Font, with a green `❯ <command>` prompt line on top.
 # 4. Renders the HTML with headless Chrome at device-scale-factor 2 (retina),
 #    sizing the window to the content via a measuring pass, and writes the
 #    PNGs into screenshots/, overwriting the ones the README embeds.
@@ -138,7 +138,7 @@ prompt = '<span style="color:%s">❯ %s</span>\n' % (GREEN, html.escape(display)
 print("""<!doctype html><meta charset="utf-8"><style>
 body{margin:0}
 #term{display:inline-block;margin:0;background:%s;color:%s;
-padding:12px 18px 14px 14px;font:16px/1.45 "MesloLGS NF",Menlo,monospace;
+padding:12px 18px 14px 14px;font:16px/1.45 "MesloLGS Nerd Font","MesloLGS NF",Menlo,monospace;
 -webkit-font-smoothing:antialiased}
 </style>
 <pre id="term">%s%s</pre>

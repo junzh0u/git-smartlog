@@ -1426,7 +1426,6 @@ function main {
     # metadata-only (full header instead).
     local full=0
     (( ${#ARG_FULL} )) && full=1
-    (( full )) && SUBLINE_CAP=0
     # -p is sticky per repo: an explicit -p drops a marker file in the git dir
     # (smartlog-pr-on, beside the PR cache — nothing needs gitignoring) so
     # later runs tag PRs without the flag; an explicit -P/--no-prs removes the
@@ -1453,6 +1452,26 @@ function main {
         fi
     fi
 
+    local base_arg=
+    (( ${#ARG_BASE} > 0 )) && base_arg=${ARG_BASE[-1]}
+
+    run_paged smartlog_render
+}
+
+function smartlog_render {
+    # The whole smartlog view for one flag tuple. Split out of main so it can
+    # be invoked more than once per process; it takes no arguments and touches
+    # no ARG_* array — it reads the parse half's locals (show_changes,
+    # show_branches, full, show_prs, prs_explicit, base_arg) via dynamic
+    # scoping, the same mechanism render_plan and the other helpers already
+    # lean on. Every array and palette it builds is local, so re-entry gets a
+    # clean slate.
+
+    # -f lifts the submodule sub-line cap; set it BOTH ways so a re-render in
+    # the same shell (a toggle turning -f back off) gets the default back —
+    # same discipline as the STAT_WANT_BODY save/restore below.
+    if (( full )); then SUBLINE_CAP=0; else SUBLINE_CAP=10; fi
+
     NOW=$EPOCHSECONDS
     local today
     strftime -s today '%Y-%m-%d' $NOW
@@ -1476,9 +1495,6 @@ function main {
        [[ -z $(git for-each-ref --count=1 --format=x "refs/remotes/*/${cur_branch}" 2>/dev/null) ]]; then
         ACTIVE_BRANCH="${cur_branch}*"
     fi
-
-    local base_arg=
-    (( ${#ARG_BASE} > 0 )) && base_arg=${ARG_BASE[-1]}
 
     local base_ref
     if [[ -n $base_arg ]]; then
@@ -2242,9 +2258,10 @@ function run_paged {
 }
 
 # Multi-call dispatch on the invocation name: git-smartstat runs only the stat
-# block, anything else (git-smartlog) runs the full smartlog paged (see
-# run_paged; smartstat's block is short and feeds scripts, so it never pages).
+# block, anything else (git-smartlog) runs the full smartlog — main parses,
+# then pages the render (see run_paged; smartstat's block is short and feeds
+# scripts, so it never pages).
 case $PROG in
     git-smartstat|smartstat) smartstat_main "$@" ;;
-    *)                       run_paged main "$@" ;;
+    *)                       main "$@" ;;
 esac

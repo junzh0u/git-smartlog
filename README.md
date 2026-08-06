@@ -2,7 +2,7 @@
 
 A [Sapling](https://sapling-scm.com/)-inspired `smartlog` for plain Git, in a single self-contained zsh script. The same file doubles as [`git-smartstat`](#git-smartstat), a standalone view of uncommitted changes.
 
-It renders the current branch's **draft stack** — the first-parent chain of your local (unpushed) commits — drawn on top of its nearest **public** (pushed) base, with relative timestamps, authors, and ref decorations. A dirty working tree always draws an uncommitted-changes node on top, and three independent flags — `-c` for per-file change stats under your commits and your working copy, `-b` to fold your other local branches into the graph as full stacks, `-f` to stop abbreviating anything — combine freely. See below.
+It renders the current branch's **draft stack** — the first-parent chain of your local (unpushed) commits — drawn on top of its nearest **public** (pushed) base, with relative timestamps, authors, and ref decorations. A dirty working tree always draws an uncommitted-changes node on top, listing what you changed, and three independent flags — `-c` for per-file change stats under your commits, `-b` to fold your other local branches into the graph as full stacks, `-f` to stop abbreviating anything — combine freely. See below.
 
 It began as a mimic of Sapling's `sl`, and still owes it the graph layout, the relative-time format and the color defaults. It has since grown enough of its own that it no longer tracks `sl`'s output, and isn't trying to. Four things come from [Jujutsu](https://github.com/jj-vcs/jj) instead: the uncommitted-changes node, since jj treats the working copy as a commit in its own right; the `(empty)` label on a commit that changed nothing; hashes that dim everything past the prefix which uniquely identifies them; and a node glyph that carries how rewritable the commit is (`o` → `◇` → `◆`) rather than leaving it to the palette.
 
@@ -100,7 +100,7 @@ $ git smartlog -m
 ~
 ```
 
-A synthetic **Uncommitted changes** node is drawn on top of `HEAD` whenever the working tree is dirty — no flag needed. It's one line: compact totals from `git diff --stat HEAD`, so a dirty tree costs the graph a single row no matter how much is uncommitted. Loose untracked files are folded into those totals (as new-file additions) via a throwaway index overlay, so they count without touching the real index; a **wholly-untracked directory counts as one entry** rather than every file inside it, just like `git status`. The per-file breakdown is `-c`'s job — the node is a commit like any other in that respect — and that's the section right after this one.
+A synthetic **Uncommitted changes** node is drawn on top of `HEAD` whenever the working tree is dirty — no flag needed, and **files and all**. Its header carries compact totals from `git diff --stat HEAD`; under it, one line per changed file. Every other node earns its one-line header by having a subject that says what it did — the working copy has none, so the file list is the whole of what it can tell you, and hiding it behind a flag would leave the node saying nothing. (That's what `-c` is for on *commits*, and its section — right after this one — is where the body format is spelled out; the node's body and `-c`'s are the same thing.) Loose untracked files are folded into the totals (as new-file additions) via a throwaway index overlay, so they count without touching the real index; a **wholly-untracked directory counts as one entry** rather than every file inside it, just like `git status`.
 
 The `@` marker moves to the node — that's where the working copy is — and `HEAD` drops to an `o` (keeping its author and subject):
 
@@ -108,25 +108,49 @@ The `@` marker moves to the node — that's where the working copy is — and `H
 ```text
 $ git smartlog
   @  Uncommitted changes  11 files, +30 -13
+  │  A metrics.go           | 7 +++++++
+  │  ? coverage/            | 2 files
+  │  ? retry_test.go        | 9 +++++++++
+  │  M http_client.go       | 2 +-
+  │  M retry.go             | 8 +++++++-
+  │  M scripts/release.sh   | 0 +x
+  │  D legacy.go            | 6 ------
+  │  R logging.go => log.go | 0
+  │  T config.json          | 5 +----
+  │  S vendor/timeutil      | 2 +-
+  │      ? clock.go    | 1 +
+  │      M timeutil.go | 2 ++
+  │      › v1.11.0
+  │      › v1.10.0
+  │      › v1.9.0
+  │      › v1.8.0
+  │      › v1.7.0
+  │      › v1.6.0
+  │      › v1.5.0
+  │      › v1.4.0
+  │      › v1.3.0
+  │      › v1.2.0
+  │      … +1 more
+  │  U version.go           | 4 ++++
   │
-  o  2f0e95dfc5  14 minutes ago  junz  feat/retry-backoff*
+  o  9c88963f33  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  6660e2b318  Today at 20:10  junz
+  o  edb0dc38e9  Today at 12:11  junz
   │  Add exponential backoff with jitter
   │
-  o  859711ce71  Today at 18:10  junz
+  o  d1a3bfbf91  Today at 10:11  junz
   │  (empty) Require golang.org/x/time
   │
-  o  0280c2f0a8  Yesterday at 23:10  junz
+  o  469c357174  Yesterday at 15:11  junz
 ╭─╯  Extract retry policy into its own module
 │
-◆  9126f994b8  Thursday at 23:10  junz  origin/master
+◆  f5ad6667d7  Monday at 15:11  junz  origin/master
 │  Bump dependencies
 ~
 ```
 
-With `-c` / `--changes`, a per-file stat block attaches to **every commit in the current stack**, clean or dirty (against each commit's first parent), **and to the uncommitted node** — the same flag, on the same footing; sitting directly on the trunk (no stack), it covers **every public commit in view** instead — pair it with `-f` to walk back through it. Commit bodies close with a dim `N files, +X -Y` total line; the uncommitted node keeps its total in the header it already had. An `(empty)` commit gets no body — there is nothing to stat, and its subject already says so.
+With `-c` / `--changes`, that same per-file stat block attaches to **every commit in the current stack**, clean or dirty (against each commit's first parent); sitting directly on the trunk (no stack), it covers **every public commit in view** instead — pair it with `-f` to walk back through it. Commit bodies close with a dim `N files, +X -Y` total line; the uncommitted node, which draws its body either way, keeps its total in the header it already had. An `(empty)` commit gets no body — there is nothing to stat, and its subject already says so.
 
 Every body is `git diff --stat` bars with each filename prefixed by a one-letter change marker; both marker and name are color-coded by kind, on top of git's usual green/red `+`/`-` bars. Lines are **grouped by marker**, in the order below (sorted by path within each group, matching `git status`):
 
@@ -210,41 +234,65 @@ With `-b` / `--branches`, every **other local branch** joins the graph too, each
 ```text
 $ git smartlog -b -f
   @  Uncommitted changes  11 files, +30 -13
+  │  A metrics.go           | 7 +++++++
+  │  ? coverage/            | 2 files
+  │  ? retry_test.go        | 9 +++++++++
+  │  M http_client.go       | 2 +-
+  │  M retry.go             | 8 +++++++-
+  │  M scripts/release.sh   | 0 +x
+  │  D legacy.go            | 6 ------
+  │  R logging.go => log.go | 0
+  │  T config.json          | 5 +----
+  │  S vendor/timeutil      | 2 +-
+  │      ? clock.go    | 1 +
+  │      M timeutil.go | 2 ++
+  │      › v1.11.0
+  │      › v1.10.0
+  │      › v1.9.0
+  │      › v1.8.0
+  │      › v1.7.0
+  │      › v1.6.0
+  │      › v1.5.0
+  │      › v1.4.0
+  │      › v1.3.0
+  │      › v1.2.0
+  │      › v1.1.0
+  │  U version.go           | 4 ++++
   │
-  o  2eba87d41d  14 minutes ago  junz  feat/retry-backoff*
+  o  9c88963f33  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  508eb458ca  Today at 20:42  junz  wip/backoff
+  o  edb0dc38e9  Today at 12:11  junz  wip/backoff
   │  Add exponential backoff with jitter
   │
-  o  1d043187ca  Today at 18:42  junz
+  o  d1a3bfbf91  Today at 10:11  junz
   │  (empty) Require golang.org/x/time
   │
-  │ o  8c4ace2f8e  Today at 05:42  junz  spike/http3
+  │ o  ba349a0ba4  Yesterday at 21:11  junz  spike/http3
   │ │  Spike HTTP/3 transport
   │ │
-  │ │ o  def5ea265d  Today at 04:42  junz  refactor/timeouts
+  │ │ o  bda5ff01ae  Yesterday at 20:11  junz  refactor/timeouts
   │ ├─╯  Let callers override the attempt timeout
   │ │
-  │ o  fc76d17f31  Today at 03:42  junz
+  │ o  ced6e89fda  Yesterday at 19:11  junz
   ├─╯  Bound each attempt with a timeout
   │
-  o  fd1261ffc9  Yesterday at 23:42  junz
+  o  469c357174  Yesterday at 15:11  junz
 ╭─╯  Extract retry policy into its own module
 │
-│ ◇  ad37e81b52  Friday at 23:42  junz  origin/hotfix
+│ ◇  d98069450f  Tuesday at 15:11  junz  origin/hotfix
 ├─╯  Patch release 0.1.1
 │
-◆  4e4eef0507  Thursday at 23:42  junz  origin/master
+◆  f5ad6667d7  Monday at 15:11  junz  origin/master
 ╷  Bump dependencies
 ╷
-╷ o  9746e604e8  Yesterday at 22:42  junz  fix/redirect-loop
+╷ o  f02cdf421c  Yesterday at 14:11  junz  fix/redirect-loop
 ╷ │  Abort redirect loops via CheckRedirect
 ╷ │
-╷ o  da4f68a140  Yesterday at 21:42  junz
+╷ o  abb3ea8725  Yesterday at 13:11  junz
 ╭─╯  Cap redirect chains at 10 hops
 │
-◆  263b50e712  Tuesday at 23:42  alice  prod
+◆  1307e0e4e5  Saturday at 15:11  alice  prod
 │  Initial project scaffold
 ~
 ```
@@ -255,41 +303,65 @@ At each fork the spine child (the one on `HEAD`'s path, else the newest subtree)
 ```text
 $ git smartlog -b
   @  Uncommitted changes  11 files, +30 -13
+  │  A metrics.go           | 7 +++++++
+  │  ? coverage/            | 2 files
+  │  ? retry_test.go        | 9 +++++++++
+  │  M http_client.go       | 2 +-
+  │  M retry.go             | 8 +++++++-
+  │  M scripts/release.sh   | 0 +x
+  │  D legacy.go            | 6 ------
+  │  R logging.go => log.go | 0
+  │  T config.json          | 5 +----
+  │  S vendor/timeutil      | 2 +-
+  │      ? clock.go    | 1 +
+  │      M timeutil.go | 2 ++
+  │      › v1.11.0
+  │      › v1.10.0
+  │      › v1.9.0
+  │      › v1.8.0
+  │      › v1.7.0
+  │      › v1.6.0
+  │      › v1.5.0
+  │      › v1.4.0
+  │      › v1.3.0
+  │      › v1.2.0
+  │      … +1 more
+  │  U version.go           | 4 ++++
   │
-  o  2eba87d41d  14 minutes ago  junz  feat/retry-backoff*
+  o  9c88963f33  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  508eb458ca  Today at 20:42  junz  wip/backoff
+  o  edb0dc38e9  Today at 12:11  junz  wip/backoff
   │  Add exponential backoff with jitter
   │
-  o  1d043187ca  Today at 18:42  junz
+  o  d1a3bfbf91  Today at 10:11  junz
   │  (empty) Require golang.org/x/time
   │
-  │ o  8c4ace2f8e  Today at 05:42  junz  spike/http3
+  │ o  ba349a0ba4  Yesterday at 21:11  junz  spike/http3
   │ │  Spike HTTP/3 transport
   │ │
-  │ │ o  def5ea265d  Today at 04:42  junz  refactor/timeouts
+  │ │ o  bda5ff01ae  Yesterday at 20:11  junz  refactor/timeouts
   │ ├─╯  Let callers override the attempt timeout
   │ │
-  │ o  fc76d17f31  Today at 03:42  junz
+  │ o  ced6e89fda  Yesterday at 19:11  junz
   ├─╯  Bound each attempt with a timeout
   │
-  o  fd1261ffc9  Yesterday at 23:42  junz
+  o  469c357174  Yesterday at 15:11  junz
 ╭─╯  Extract retry policy into its own module
 │
-│ ◇  ad37e81b52  Friday at 23:42  junz  origin/hotfix
+│ ◇  d98069450f  Tuesday at 15:11  junz  origin/hotfix
 ├─╯  Patch release 0.1.1
 │
-◆  4e4eef0507  Thursday at 23:42  junz  origin/master
+◆  f5ad6667d7  Monday at 15:11  junz  origin/master
 ╷  Bump dependencies
 ╷
-╷ o  9746e604e8  Yesterday at 22:42  junz  fix/redirect-loop
+╷ o  f02cdf421c  Yesterday at 14:11  junz  fix/redirect-loop
 ╷ │  Abort redirect loops via CheckRedirect
 ╷ │
-╷ o  da4f68a140  Yesterday at 21:42  junz
+╷ o  abb3ea8725  Yesterday at 13:11  junz
 ╭─╯  Cap redirect chains at 10 hops
 │
-◆  263b50e712  Tuesday at 23:42  prod
+◆  1307e0e4e5  Saturday at 15:11  prod
 │
 ~
 ```
@@ -374,14 +446,15 @@ usage: git-smartlog [-C <path>] [-c] [-b] [-f] [-m] [-p|-P] [--base REV]
 
 Sapling-inspired smartlog using only git: the current branch's draft stack
 drawn on top of its nearest public (pushed) base. A dirty working tree always
-draws an "Uncommitted changes" node on top of HEAD, carrying its totals.
+draws an "Uncommitted changes" node on top of HEAD, listing its files.
 
 The view flags below are independent and combine freely.
 
   -c, --changes       show per-file changes under every commit in the current
                       stack — or under the public commit in view when HEAD
-                      sits on the trunk (pair with -f for history) — and under
-                      the uncommitted node, which otherwise shows totals only
+                      sits on the trunk (pair with -f for history); the
+                      uncommitted node lists its files with or without it,
+                      having no subject to say what it changed
   -b, --branches      show every other local branch as its full stack —
                       including forks at draft commits and commits stacked
                       above HEAD
@@ -431,7 +504,7 @@ folded in and wholly-untracked directories collapse to a single entry like git
 status. Each name carries a change marker — A added, ? untracked, M modified,
 D deleted, R renamed, T typechange, S submodule, U unmerged — colored by kind.
 Prints nothing when the working tree is clean. The same block git-smartlog draws
-under its uncommitted-changes node with -c.
+under its uncommitted-changes node.
 
       --color WHEN    colorize output: auto (default), always, or never
   -C <path>           run as if started in <path>, like git's own -C
@@ -486,7 +559,7 @@ It prints nothing when the working tree is clean. Both names share one in-file f
 - **Pushed drafts** — a draft reachable from any remote-tracking ref draws `◇`. One `git rev-list <draft heads> --not --remotes` prints the drafts that *aren't*, so the ones it omits are pushed; the walk stops at the remote boundary, so it's bounded by the unpushed set, and it's skipped entirely in a repo with no remotes. (`--no-walk` doesn't restrict that to the argument set — with `--not` in play git walks regardless.)
 - **Hashes** — 10 digits, but only the leading ones matter: a second `%h` at `--abbrev=4` in the same `git log` pass asks git for the shortest prefix that names exactly one object, and the digits past it render dim. jj's idea — its ids show at a glance how much you'd have to type. A repo big enough to collide inside 10 digits is shown the wider unique prefix instead of an ambiguous hash, the way git widens its own output.
 - **`(empty)`** — a commit whose tree equals its first parent's (the empty tree for a root commit) gets its subject prefixed `(empty)`, and no `-c` body. jj labels these in its log; git doesn't, so an emptied commit looks like any other. Decided from tree hashes, not diffs: `%T` rides along with the metadata every row already fetches, and the handful of parents outside the window are fetched in one batch rather than a `rev-parse` per row. In the `-f` tail, where there is no window to batch over, rows are held one behind — in a first-parent walk the next record *is* the previous row's parent.
-- **Uncommitted changes** — whenever `git status` is non-empty, a synthetic node on top of `HEAD` carrying compact totals; the `@` marker moves there. Borrowed from jj, where the working copy *is* a commit and needs no synthesis. With `-c` it also gets per-file `git diff --stat HEAD` bars. Totals and bars alike are computed against a throwaway index overlay that intent-to-adds loose untracked files so they're folded in without mutating the repo (a wholly-untracked directory instead collapses to one `dir/ | N files` entry, like `git status`). Each body filename gets a one-letter change marker (`A`/`?`/`M`/`D`/`R`/`T`/`S`/`U`, from `git diff --raw`, plus the porcelain status for conflicts) colored by kind (see the marker table above), and a `+x`/`-x` hint on executable-bit flips. This block is computed by the in-file `uncommitted_stat` function — the same code the [`git-smartstat`](#git-smartstat) command runs. Without `-c` that function stops at the totals, skipping the marker/sort pass and the per-submodule expansion nobody would see.
+- **Uncommitted changes** — whenever `git status` is non-empty, a synthetic node on top of `HEAD` carrying compact totals plus per-file `git diff --stat HEAD` bars; the `@` marker moves there. Borrowed from jj, where the working copy *is* a commit and needs no synthesis. The bars need no flag, unlike a commit's: a commit's subject already says what it did, so `-c` is an ask; the working copy has no subject, so its files *are* the description. Totals and bars alike are computed against a throwaway index overlay that intent-to-adds loose untracked files so they're folded in without mutating the repo (a wholly-untracked directory instead collapses to one `dir/ | N files` entry, like `git status`). Each body filename gets a one-letter change marker (`A`/`?`/`M`/`D`/`R`/`T`/`S`/`U`, from `git diff --raw`, plus the porcelain status for conflicts) colored by kind (see the marker table above), and a `+x`/`-x` hint on executable-bit flips. This block is computed by the in-file `uncommitted_stat` function — the same code the [`git-smartstat`](#git-smartstat) command runs.
 - **Public window** — one commit: the base, with `~` below it. `-f` streams the history below instead.
 - **Other branches** — with `-b`/`--branches`, every head's first-parent chain is unioned into a forest of draft trees (shared prefixes dedup), each rendered above its root's public fork point: the spine child continues the column, side subtrees open one column deeper per fork level and close with a `├─╯` bend above the fork. Sibling subtrees order by newest commit date and the spine prefers `HEAD`'s path — Git has no revision numbers to sort by. Includes commits stacked above `HEAD`. Fork points are added to the public column no matter how far down they sit, with commits skipped between them eliding to a dotted `╷` spine. Branch names render cyan so they stand apart from green remote refs. Two branches don't get a node of their own: one merged into the trunk (its head *is* the merge-base) labels that public commit instead, and one whose same-name remote ref sits at the same commit shows only the remote name.
 - **PR numbers** — with `-p`/`--prs`, every branch name shown on a commit (the active branch, a remote bookmark, or a `-b` local) that has a GitHub PR gets a trailing `#N` tag: blue for open, dim blue for draft, magenta for merged, red for closed — and, on a color-capable TTY, an OSC 8 hyperlink to the PR. One `gh pr list --state all` call maps branches to PRs (a branch with several keeps an open one over closed/merged, else the newest); the trunk's own branch is skipped so its long-merged PR doesn't tag every graph. The call's ~1s API round-trip is cached per repo in the git dir for `$GIT_SMARTLOG_PR_TTL` seconds (default 60; `0` forces a refetch), so only the first `-p` run in a while pays it. Needs the GitHub CLI (`gh`); a failed listing warns and falls back to the stale cache, else renders without tags. `-p` is sticky per repo — it drops a marker file in the git dir (`smartlog-pr-on`), so later runs tag PRs without the flag; `-P`/`--no-prs` removes the marker and turns tagging off (winning when both are given). When tagging is on only via the marker, a missing `gh` warns instead of erroring, so plain runs keep working on a machine without it.

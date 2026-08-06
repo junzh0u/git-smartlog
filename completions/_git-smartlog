@@ -23,7 +23,7 @@ _git-smartlog_base() {
 
 _git-smartlog() {
     _arguments -s -S \
-        '(-c --changes)'{-c,--changes}'[per-file changes under every commit in view, and under the uncommitted node]' \
+        '(-c --changes)'{-c,--changes}'[per-file changes under every commit in view]' \
         '(-b --branches)'{-b,--branches}'[other local branches as their full stacks, sapling-style]' \
         '(-f --full)'{-f,--full}'[abbreviate nothing: full headers, streaming history, uncapped submodule sub-lines]' \
         '(-m --message)'{-m,--message}'[full commit messages: body lines dim under each subject]' \

@@ -10,7 +10,7 @@
 #
 # Multi-call: this same file is also `git-smartstat`. Symlink it under that name
 # (e.g. `ln -s git-smartlog git-smartstat`) and the git-smartstat name runs ONLY
-# the uncommitted-changes stat — the body the wdir node draws under -c — as a
+# the uncommitted-changes stat — the very block the wdir node draws — as a
 # standalone
 # command (`git smartstat`). Dispatch is on the invocation name ($PROG) at the
 # bottom; both names share `uncommitted_stat`, so there's no duplicated logic.
@@ -44,8 +44,9 @@
 #     gutter and align under the subject column. Piped there is no width to
 #     wrap to, so the line stays whole — and captures stay stable.
 #   - Uncommitted changes are always shown: a dirty working tree draws a
-#     synthetic node on top of HEAD, one line carrying its totals (-c adds the
-#     per-file body, see Format below). Borrowed from jj, which treats the
+#     synthetic node on top of HEAD, carrying its totals and — unlike a commit,
+#     which needs -c because its subject already says what it did — always its
+#     per-file body too (see Format below). Borrowed from jj, which treats the
 #     working copy as a commit in its own right.
 #   - Optional full headers: with -f/--full, every commit shows its author and
 #     subject — including public commits by other people, which render
@@ -165,12 +166,13 @@
 #   - Commit changes (opt-in via -c/--changes): draws
 #     every draft in the current stack its own per-file stat block (vs its first
 #     parent; the empty tree for a root commit) under its subject row, clean or
-#     dirty, closed by a dim "N files, +X -Y" total line — and the same body
-#     under the wdir node, whose totals already live in its header. When HEAD
-#     sits directly on the trunk (no drafts), it covers the public commit in
+#     dirty, closed by a dim "N files, +X -Y" total line. When HEAD sits
+#     directly on the trunk (no drafts), it covers the public commit in
 #     view instead (pair with -f to walk back through history). Bodies share
 #     the wdir node's format, markers and colors ('?'/U can't occur in a
-#     committed diff); an empty commit gets no body.
+#     committed diff); an empty commit gets no body. The wdir node needs no
+#     flag — its subject row says nothing a file list wouldn't say better, so
+#     the body is always there and -c doesn't reach it.
 #   - Message body (opt-in via -m/--message): the commit message past its
 #     subject, rendered dim line-by-line under the subject row — blank lines
 #     kept as bare spine rows — above any -c stat body. Long lines word-wrap
@@ -363,14 +365,15 @@ function smartlog_usage {
 
 Sapling-inspired smartlog using only git: the current branch's draft stack
 drawn on top of its nearest public (pushed) base. A dirty working tree always
-draws an \"Uncommitted changes\" node on top of HEAD, carrying its totals.
+draws an \"Uncommitted changes\" node on top of HEAD, listing its files.
 
 The view flags below are independent and combine freely.
 
   -c, --changes       show per-file changes under every commit in the current
                       stack — or under the public commit in view when HEAD
-                      sits on the trunk (pair with -f for history) — and under
-                      the uncommitted node, which otherwise shows totals only
+                      sits on the trunk (pair with -f for history); the
+                      uncommitted node lists its files with or without it,
+                      having no subject to say what it changed
   -b, --branches      show every other local branch as its full stack —
                       including forks at draft commits and commits stacked
                       above HEAD
@@ -412,7 +415,7 @@ folded in and wholly-untracked directories collapse to a single entry like git
 status. Each name carries a change marker — A added, ? untracked, M modified,
 D deleted, R renamed, T typechange, S submodule, U unmerged — colored by kind.
 Prints nothing when the working tree is clean. The same block git-smartlog draws
-under its uncommitted-changes node with -c.
+under its uncommitted-changes node.
 
       --color WHEN    colorize output: auto (default), always, or never
   -C <path>           run as if started in <path>, like git's own -C
@@ -484,12 +487,6 @@ typeset -ga STAT_BODY
 # submodule_sublines, and inherited by the nested run a dirty submodule inside a
 # submodule triggers, so -f uncaps all the way down.
 typeset -g SUBLINE_CAP=10
-
-# Whether uncommitted_stat should build STAT_BODY at all. main clears it for the
-# wdir node when -c is absent — the header's summary is all that renders then,
-# and everything past it (markers, colors, sorting, and the per-submodule forks
-# that expand an S entry) is work nobody reads.
-typeset -g STAT_WANT_BODY=1
 
 # How many hash digits a header row shows. Purely a readability width: the
 # digits that actually matter are the shortest UNIQUE prefix, which abbrev_hash
@@ -738,7 +735,6 @@ function uncommitted_stat {
     # colored, the caller styles it) and STAT_BODY (per-file body lines, marked and,
     # when color_on, colored). Reads the working tree only; never mutates the real
     # index. Shared by git-smartlog's wdir node and standalone `git-smartstat`.
-    # STAT_WANT_BODY=0 asks for the summary alone and leaves STAT_BODY empty.
     #
     # $3 (optional) = a commit: stat THAT commit's changes — against its first
     # parent, or the empty tree for a root commit — instead of the working tree
@@ -900,14 +896,6 @@ function uncommitted_stat {
         (( n_files == 1 )) && file_word=file
         STAT_SUMMARY="${n_files} ${file_word}"
         (( ins > 0 || del > 0 )) && STAT_SUMMARY+=", +${ins} -${del}"
-
-        # Summary-only caller (the wdir node without -c): stop here. Everything
-        # below only shapes STAT_BODY, and the temp index still goes away — the
-        # `always` block runs on return.
-        if (( ! STAT_WANT_BODY )); then
-            STAT_BODY=()
-            return
-        fi
 
         # Marker/color maps per body filename. Declared up here (not inside the
         # classification block) so the synthetic untracked-dir lines appended next
@@ -1517,10 +1505,11 @@ function main {
     git rev-parse --git-dir >/dev/null 2>&1 || die "not a git repository"
     cd_toplevel
     # The view flags are orthogonal: -c adds a change body to every commit in
-    # view AND to the uncommitted node, -b brings in the other local branches as
-    # full stacks, -f stops abbreviating. The uncommitted NODE is not a flag at
-    # all — it draws whenever the working tree is dirty; -c only governs whether
-    # it lists its files.
+    # view, -b brings in the other local branches as full stacks, -f stops
+    # abbreviating. The uncommitted node is not a flag at all — it draws
+    # whenever the working tree is dirty, files and all: -c is what a commit
+    # needs because its subject already says what it did, and the uncommitted
+    # node has no subject to read.
     local show_changes=0
     (( ${#ARG_CHANGES} )) && show_changes=1
     local show_branches=0
@@ -1673,16 +1662,13 @@ function main {
     local color_on=0
     (( TTY_OUT )) && [[ -z $NO_COLOR ]] && color_on=1
 
-    # The node's summary always draws; its per-file body is -c's, same as every
-    # commit's. Without -c, tell uncommitted_stat to stop once it has the
-    # summary — the body it would build is the expensive half (a submodule
-    # entry alone forks per submodule to expand its sub-lines).
-    (( show_changes )) || STAT_WANT_BODY=0
-
+    # Summary and per-file body both draw unconditionally: unlike a commit,
+    # whose subject says what it did, the file list is the only description the
+    # working copy has. That makes the body pass (a submodule entry forks per
+    # submodule to expand its sub-lines) part of every dirty-tree run.
     local has_changes=0 wdir_summary=
     local -a wdir_stat
     uncommitted_stat $color_on 4       # body lines are indented "  │ " in the node
-    STAT_WANT_BODY=1                   # scoped to that one call
     has_changes=$STAT_HAS_CHANGES
     wdir_summary=$STAT_SUMMARY
     wdir_stat=("${STAT_BODY[@]}")

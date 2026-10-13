@@ -879,6 +879,23 @@ function classify_change {
     REPLY=$mark REPLY_COL=$col REPLY_HINT=$hint
 }
 
+function marker_rank {
+    # REPLY = the group rank of change marker $1 (classify_change's): the
+    # order both the stat body and git-smartshow's sidebar list files in —
+    # A ? M D R T S U, then anything else.
+    case $1 in
+        A)   REPLY=1 ;;
+        '?') REPLY=2 ;;
+        M)   REPLY=3 ;;
+        D)   REPLY=4 ;;
+        R|C) REPLY=5 ;;
+        T)   REPLY=6 ;;
+        S)   REPLY=7 ;;
+        U)   REPLY=8 ;;
+        *)   REPLY=9 ;;
+    esac
+}
+
 function unmerged_paths {
     # reply = the conflicted paths (within pathspec $@), root-relative. Not
     # from `git status --porcelain`, which wraps a path holding a space in
@@ -1243,17 +1260,8 @@ function uncommitted_stat {
                     else
                         rendered="${lead}${mark} ${nf}${trail}${after}${hint}"
                     fi
-                    case $mark in
-                        A)   rank=1 ;;
-                        '?') rank=2 ;;
-                        M)   rank=3 ;;
-                        D)   rank=4 ;;
-                        R|C) rank=5 ;;
-                        T)   rank=6 ;;
-                        S)   rank=7 ;;
-                        U)   rank=8 ;;
-                        *)   rank=9 ;;
-                    esac
+                    marker_rank $mark
+                    rank=$REPLY
                     # A submodule bump (S) carries its (capped) commit list as
                     # extra lines on the SAME entry — newline-joined onto the
                     # rendered S line — so the group sort keeps them attached to
@@ -2723,22 +2731,6 @@ function smartshow_collect {
     done
 }
 
-function smartshow_rank {
-    # REPLY = the sort rank of marker $1: the stat body's group order,
-    # A ? M D R T S U, then anything else.
-    case $1 in
-        A)   REPLY=1 ;;
-        '?') REPLY=2 ;;
-        M)   REPLY=3 ;;
-        D)   REPLY=4 ;;
-        R|C) REPLY=5 ;;
-        T)   REPLY=6 ;;
-        S)   REPLY=7 ;;
-        U)   REPLY=8 ;;
-        *)   REPLY=9 ;;
-    esac
-}
-
 function smartshow_counts {
     # REPLY = the " +X -Y" tail of a row, dimmed: only the nonzero halves, and
     # "bin" for a binary file (numstat's "-").
@@ -2778,7 +2770,7 @@ function smartshow_sorted_files {
     local -a keyed=()
     local ix=
     for ix in "$@"; do
-        smartshow_rank ${f_mark[ix]}
+        marker_rank ${f_mark[ix]}
         keyed+=("${REPLY}"$'\t'"${f_path[ix]}"$'\t'"${ix}")
     done
     reply=()

@@ -21,6 +21,7 @@ jobs:
           zsh -n git-smartlog
           zsh -n completions/_git-smartlog
           zsh -n completions/_git-smartstat
+          zsh -n completions/_git-smartshow
           zsh -n dev/make-demo.zsh
           zsh -n dev/make-screenshots.zsh
           zsh -n dev/make-fixtures.zsh

@@ -14,10 +14,16 @@
 # standalone
 # command (`git smartstat`). Dispatch is on the invocation name ($PROG) at the
 # bottom; both names share `uncommitted_stat`, so there's no duplicated logic.
+# The third name, `git-smartshow`, is a two-pane diff browser — the changed
+# files as a tree in an fzf sidebar, the selected one's diff (difftastic when
+# installed) beside it. It shares the change markers (classify_change) and the
+# untracked overlay (overlay_index) with the stat block, so the files the wdir
+# node lists are exactly the ones it opens; fzf is its own opt-in dependency.
 #
-# Completion: completions/_git-smartlog, completions/_git-smartstat — keep in
-# sync when adding/changing options. The _git-<name> naming makes them cover
-# the `git smartlog` / `git smartstat` subcommand forms too.
+# Completion: completions/_git-smartlog, completions/_git-smartstat,
+# completions/_git-smartshow — keep in sync when adding/changing options. The
+# _git-<name> naming makes them cover the `git smartlog` / `git smartstat` /
+# `git smartshow` subcommand forms too.
 #
 # Views
 #   - Single stack by default: renders the CURRENT HEAD's first-parent draft
@@ -303,6 +309,10 @@ zmodload zsh/datetime  # provides $EPOCHSECONDS and builtin strftime (no fork)
 zmodload -F zsh/stat b:zstat
 
 PROG=${0:t}
+# This file's own resolved path, for the commands git-smartshow hands fzf to
+# call back into it (see smartshow_internal). Resolved past any symlink: the
+# callbacks dispatch on GIT_SMARTSHOW_MODE, not on the name they run under.
+SELF=${0:A}
 
 # Whether stdout is a terminal, probed ONCE before anything runs: run_paged
 # captures main's output via $(...), which makes stdout a pipe, so color and
@@ -738,7 +748,8 @@ function classify_change {
     # (the new path for a rename). Reads the caller's is_untracked and
     # is_unmerged assocs via dynamic scoping: git reports an intent-to-added
     # untracked file as A and a conflicted one as M, so both need the caller's
-    # side knowledge.
+    # side knowledge. Shared by uncommitted_stat's body and git-smartshow's
+    # sidebar, so the two can never disagree about what a file is.
     #   A new (staged)  green       ? untracked    dim green
     #   D deleted       red         R/C renamed    blue
     #   M modified      default     T typechange   magenta
@@ -2350,6 +2361,662 @@ function smartstat_main {
     done
 }
 
+function smartshow_usage {
+    print -r -- "usage: $PROG [-C <path>] [--tool TOOL] [--list] [<rev> | <rev>..<rev> | <rev> <rev>] [-- <path>...]
+
+Browse a diff as a file tree beside the diff itself: the changed files in a
+sidebar on the left, the selected file's diff in the main pane on the right
+(needs fzf). With no revision it shows @ — the working copy's uncommitted
+changes, untracked files included, or HEAD's own change when the tree is
+clean. One revision shows that commit's change against its first parent, like
+git show; a range or two revisions show the diff between them, like git diff.
+Sidebar names carry git-smartstat's change markers and colors.
+
+  j / k               next / previous file
+  h / l               fold / unfold a directory (h on a file jumps to its directory)
+  ↑ / ↓               scroll the diff; space / b a page, d / u half a page,
+                      g / G to either end
+  t                   switch between difftastic and git's own diff
+  /                   find a path (enter or esc returns to the tree)
+  ctrl-r              reload after the working tree changed
+  q, esc              quit
+
+      --tool TOOL     diff renderer: auto (default — difft when installed), difft,
+                      or git; \$GIT_SMARTSHOW_TOOL sets the default
+      --list          print the sidebar's file tree and exit
+  -C <path>           run as if started in <path>, like git's own -C
+  -h, --help          show this help and exit
+
+Piped, it prints the diff once and exits, like git diff."
+}
+
+# The keys git-smartshow binds to letters and arrows; `/` search unbinds them
+# so they type into the query, and leaving search rebinds them.
+SMARTSHOW_LETTERS='j,k,h,l,left,right,t,q,space,b,d,u,g,G,/'
+
+# git-smartshow keeps its view in a handful of variables that every function
+# below reads by dynamic scoping: spec_mode (wdir — the working copy against
+# HEAD, through the untracked overlay — or diff), spec_args (the endpoints
+# `git diff` takes), pathspec (top-level-relative), sdir (the per-run state
+# directory). smartshow_main sets them from the command line; the internal modes
+# fzf calls back into (see smartshow_internal) rebuild them from GIT_SMARTSHOW_*.
+#
+# The state directory holds what has to outlive one callback:
+#   index      the untracked overlay (wdir only), rebuilt by every listing
+#   tool       the renderer in use, difft or git — `t` rewrites it
+#   collapsed  the folded directories, one key per line — `h`/`l` edit it
+#   rows       the keys of the last tree listing in order, for pos() lookups
+#   initial    the last listing a key handler built, for its reload to cat
+#   pos        where the cursor goes once that reload lands (see smartshow_relist)
+#   header     the last listing's header, title over totals
+
+function smartshow_git {
+    # `git "$@"` against the view's index — the overlay in wdir mode, so
+    # intent-to-added untracked files diff as new files.
+    if [[ $spec_mode == wdir ]]; then
+        GIT_INDEX_FILE=$sdir/index git "$@"
+    else
+        git "$@"
+    fi
+}
+
+function smartshow_collect {
+    # Fill the caller's f_* arrays with one entry per changed file — path,
+    # rename source, marker, color, hint, +lines, -lines — plus tot_add and
+    # tot_del. In wdir mode it first rebuilds the untracked overlay, so a
+    # reload picks up files created since the last one. ONE `git diff --raw
+    # --numstat -z` pass: git emits every raw record first and then every
+    # numstat record, in the same order, so the two halves zip by position.
+    # -z because the default output joins a rename into "old => new" (or
+    # "dir/{a => b}"), which can't be split back reliably.
+    local -A is_untracked=() is_unmerged=()
+    if [[ $spec_mode == wdir ]]; then
+        local u= pl=
+        local -a untracked=(${(f)"$(git ls-files --others --exclude-standard -- $pathspec 2>/dev/null)"})
+        for u in $untracked; do is_untracked[$u]=1; done
+        rm -f -- $sdir/index
+        overlay_index $sdir/index "$(git rev-parse --git-path index 2>/dev/null)" $untracked
+        for pl in ${(f)"$(git status --porcelain -- $pathspec 2>/dev/null)"}; do
+            case ${pl[1,2]} in
+                DD|AU|UD|UA|DU|AA|UU) is_unmerged[${pl[4,-1]}]=1 ;;
+            esac
+        done
+    fi
+    local -a tok=("${(@0)$(smartshow_git diff --no-ext-diff --raw --numstat -z $spec_args -- $pathspec 2>/dev/null)}")
+    local -i i=1 k=0 n=${#tok}
+    local -a hdr=()
+    local st= old= p= t= rest= a= d=
+    while (( i <= n )) && [[ ${tok[i]} == :* ]]; do
+        hdr=(${=tok[i]})        # :oldmode newmode oldsha newsha STATUS
+        st=${hdr[5]}
+        if [[ $st == [RC]* ]]; then
+            old=${tok[i+1]} p=${tok[i+2]}
+            (( i += 3 ))
+        else
+            old= p=${tok[i+1]}
+            (( i += 2 ))
+        fi
+        classify_change ${hdr[1]#:} ${hdr[2]} $st "$p"
+        f_path+=("$p"); f_old+=("$old")
+        f_mark+=("$REPLY"); f_col+=("$REPLY_COL"); f_hint+=("$REPLY_HINT")
+    done
+    while (( i <= n )); do
+        t=${tok[i]}
+        (( ++i ))
+        [[ -z $t ]] && continue
+        a=${t%%$'\t'*} rest=${t#*$'\t'}
+        d=${rest%%$'\t'*}
+        # A rename's numstat record leaves its path field empty and carries
+        # both paths as the next two NUL-separated tokens.
+        [[ -z ${rest#*$'\t'} ]] && (( i += 2 ))
+        (( ++k ))
+        f_add[k]=$a f_del[k]=$d
+        [[ $a == <-> ]] && (( tot_add += a ))
+        [[ $d == <-> ]] && (( tot_del += d ))
+    done
+}
+
+function smartshow_rank {
+    # REPLY = the sort rank of marker $1: the stat body's group order,
+    # A ? M D R T S U, then anything else.
+    case $1 in
+        A)   REPLY=1 ;;
+        '?') REPLY=2 ;;
+        M)   REPLY=3 ;;
+        D)   REPLY=4 ;;
+        R|C) REPLY=5 ;;
+        T)   REPLY=6 ;;
+        S)   REPLY=7 ;;
+        U)   REPLY=8 ;;
+        *)   REPLY=9 ;;
+    esac
+}
+
+function smartshow_counts {
+    # REPLY = the " +X -Y" tail of a row, dimmed: only the nonzero halves, and
+    # "bin" for a binary file (numstat's "-").
+    local a=$1 d=$2
+    REPLY=
+    if [[ $a == - ]]; then
+        REPLY="  ${c_dim}bin${c_reset}"
+        return
+    fi
+    (( a > 0 )) && REPLY+=" ${c_add}+${a}${c_reset}"
+    (( d > 0 )) && REPLY+=" ${c_del}-${d}${c_reset}"
+    [[ -n $REPLY ]] && REPLY=" $REPLY"
+}
+
+function smartshow_file_row {
+    # Print file f_*[$1]'s row: key, rename source, display. $2 the indent,
+    # $3 the name to show (the basename in the tree, the full path flat).
+    local -i ix=$1
+    local indent=$2 name=$3 col=${f_col[$1]} mark=${f_mark[$1]} disp= hint=
+    [[ -n ${f_hint[ix]} ]] && hint="${c_dim}${f_hint[ix]}${c_reset}"
+    if (( color_on )) && [[ -n $col ]]; then
+        disp="${indent}${col}${mark}${c_reset} ${col}${name}${c_reset}${hint}"
+    else
+        disp="${indent}${mark} ${name}${hint}"
+    fi
+    [[ -n ${f_old[ix]} ]] && disp+="  ${c_dim}← ${f_old[ix]}${c_reset}"
+    smartshow_counts "${f_add[ix]}" "${f_del[ix]}"
+    disp+=$REPLY
+    row_keys+=("${f_path[ix]}")
+    print -r -- "${f_path[ix]}"$'\t'"${f_old[ix]}"$'\t'"${disp}"
+}
+
+function smartshow_sorted_files {
+    # reply = the f_* indices $@ ordered like the stat body: by marker group,
+    # then by path in byte order.
+    local LC_ALL=C
+    local -a keyed=()
+    local ix=
+    for ix in "$@"; do
+        smartshow_rank ${f_mark[ix]}
+        keyed+=("${REPLY}"$'\t'"${f_path[ix]}"$'\t'"${ix}")
+    done
+    reply=()
+    for ix in ${(o)keyed}; do reply+=("${ix##*$'\t'}"); done
+}
+
+function smartshow_render_dir {
+    # Print the tree under directory $1 ("/" for the root) at depth $2:
+    # subdirectories first, each a foldable row, then the files, grouped like
+    # the stat body. A chain of directories holding nothing but one more
+    # directory compresses into a single row ("src/lib/util/"), the way
+    # editors show compact folders; its key is the deepest directory, which is
+    # what its files' parent key is too. Reads the tree maps smartshow_rows
+    # built.
+    local dir=$1
+    local -i depth=$2
+    local sp= indent=
+    indent=${(l:depth * 2:)sp}
+    local LC_ALL=C
+    local -a subs=(${(of)d_dirs[$dir]:-})
+    local sd= shown= glyph= extra=
+    local -a only=()
+    for sd in $subs; do
+        shown=$sd
+        while [[ -z ${d_files[$shown]:-} ]]; do
+            only=(${(f)d_dirs[$shown]:-})
+            (( ${#only} == 1 )) || break
+            shown=${only[1]}
+        done
+        glyph=▾ extra=
+        if [[ -n ${collapsed[$shown]:-} ]]; then
+            glyph=▸
+            extra="  ${c_dim}${d_count[$shown]} files${c_reset}"
+            [[ ${d_count[$shown]} == 1 ]] && extra="  ${c_dim}1 file${c_reset}"
+        fi
+        smartshow_counts ${d_add[$shown]:-0} ${d_del[$shown]:-0}
+        row_keys+=("$shown")
+        print -r -- "${shown}"$'\t\t'"${indent}${c_dim}${glyph}${c_reset} ${c_dir}${shown#"$dir"}${c_reset}${extra}${REPLY}"
+        [[ -n ${collapsed[$shown]:-} ]] || smartshow_render_dir "$shown" $(( depth + 1 ))
+    done
+    smartshow_sorted_files ${=d_files[$dir]:-}
+    local ix=
+    for ix in $reply; do
+        smartshow_file_row $ix "$indent" "${f_path[ix]:t}"
+    done
+}
+
+function smartshow_rows {
+    # Print the sidebar, one "key<TAB>rename source<TAB>display" row per
+    # line — fzf shows only the display (--with-nth=3) and hands the first two
+    # to its callbacks. A directory's key ends in "/", which is also a valid
+    # pathspec for everything under it. $1 = 1 for the flat list `/` search
+    # uses (full paths, no directory rows). Records the tree's keys in
+    # $sdir/rows; a flat list doesn't, since only the tree's keys (h, and
+    # the relist after search) ever look a row up, and a late flat listing
+    # must not overwrite them.
+    local -i flat=$1
+    local -a row_keys=()
+    local -i ix=0
+    if (( flat )); then
+        smartshow_sorted_files {1..${#f_path}}
+        for ix in $reply; do
+            smartshow_file_row $ix '' "${f_path[ix]}"
+        done
+    else
+        local -A collapsed=() d_files=() d_dirs=() d_add=() d_del=() d_count=()
+        local key=
+        [[ -f $sdir/collapsed ]] && for key in ${(f)"$(<$sdir/collapsed)"}; do collapsed[$key]=1; done
+        # d_files[dir]: the f_* indices directly in dir; d_dirs[dir]: its
+        # subdirectories, newline-joined; d_add/d_del/d_count: totals over
+        # the whole subtree, for a folded row. The root's key is "/", which
+        # no repo path can start with. Arithmetic on these maps goes through
+        # $(( )) on the value, never (( map[$key] )), which would evaluate a
+        # path key as an expression.
+        local parent= up= anc= nl=$'\n'
+        for ((ix = 1; ix <= ${#f_path}; ix++)); do
+            parent=${f_path[ix]:h}/
+            [[ $parent == ./ ]] && parent=/
+            d_files[$parent]+=" $ix"
+            anc=$parent
+            while [[ $anc != / ]]; do
+                d_count[$anc]=$(( ${d_count[$anc]:-0} + 1 ))
+                [[ ${f_add[ix]} == <-> ]] && d_add[$anc]=$(( ${d_add[$anc]:-0} + f_add[ix] ))
+                [[ ${f_del[ix]} == <-> ]] && d_del[$anc]=$(( ${d_del[$anc]:-0} + f_del[ix] ))
+                up=${anc%/}
+                up=${up:h}/
+                [[ $up == ./ ]] && up=/
+                [[ $nl${d_dirs[$up]:-}$nl == *$nl"$anc"$nl* ]] ||
+                    d_dirs[$up]+="${d_dirs[$up]:+$nl}$anc"
+                anc=$up
+            done
+        done
+        smartshow_render_dir / 0
+    fi
+    (( flat )) || print -rl -- $row_keys >| $sdir/rows
+}
+
+function smartshow_palette {
+    # The row colors, empty when $color_on is 0.
+    c_reset= c_dim= c_add= c_del= c_dir=
+    (( color_on )) || return 0
+    c_reset=$'\e[0m' c_dim=$'\e[2m' c_add=$'\e[2;32m' c_del=$'\e[2;31m' c_dir=$'\e[1m'
+}
+
+function smartshow_list {
+    # Collect and print the sidebar (see smartshow_rows), and write the
+    # header — the view's title over its "N files, +X -Y" total — to
+    # $sdir/header. $1 = 1 for `/` search's flat list. Sets n_files for the
+    # caller.
+    local -i flat=${1:-0}
+    local -a f_path=() f_old=() f_mark=() f_col=() f_hint=() f_add=() f_del=()
+    local -i tot_add=0 tot_del=0
+    local c_reset= c_dim= c_add= c_del= c_dir=
+    smartshow_palette
+    smartshow_collect
+    n_files=${#f_path}
+    local summary="${n_files} files"
+    (( n_files == 1 )) && summary="1 file"
+    (( tot_add || tot_del )) && summary+=", +${tot_add} -${tot_del}"
+    print -r -- "${title}"$'\n'"${c_dim}${summary}${c_reset}" >| $sdir/header
+    (( n_files )) || return 0
+    smartshow_rows $flat
+}
+
+function smartshow_diff {
+    # Print the diff of pathspec $3.. (the whole view when none) with renderer
+    # $1 (difft or git) at width $2 (empty: the renderer's own guess),
+    # colored when $color_on. difft runs as git's external diff, so git
+    # still owns rename detection, the untracked overlay and pathspecs.
+    local tool=$1 width=$2; shift 2
+    local -a pspec=("$@")
+    (( $# )) || pspec=($pathspec)
+    local when=never
+    (( color_on )) && when=always
+    if [[ $tool == difft ]]; then
+        local -x DFT_COLOR=$when
+        [[ -n $width ]] && local -x DFT_WIDTH=$width
+        smartshow_git -c diff.external=difft diff --ext-diff --submodule=log \
+            $spec_args -- $pspec
+    else
+        smartshow_git diff --no-ext-diff --color=$when --submodule=log \
+            $spec_args -- $pspec
+    fi
+}
+
+function smartshow_pspec {
+    # reply = the pathspec for sidebar row key $1 and rename source $2: both
+    # paths for a rename, so git still pairs them up rather than showing an
+    # add and a delete.
+    reply=("$1")
+    [[ -n $2 ]] && reply+=("$2")
+}
+
+function smartshow_cmd {
+    # REPLY = the shell command fzf runs for internal mode $1 — this same
+    # file, dispatched on GIT_SMARTSHOW_MODE rather than its name.
+    REPLY="GIT_SMARTSHOW_MODE=$1 ${(qq)SELF}"
+}
+
+function smartshow_tool {
+    REPLY=git
+    [[ -f $sdir/tool ]] && REPLY=$(<$sdir/tool)
+}
+
+function smartshow_key {
+    # Handle key $1 on row key $2: print the fzf actions
+    # for it — fzf runs this via `transform`, so the printed text IS the
+    # response. A reload that should keep the cursor on its row (a fold,
+    # leaving search, ctrl-r) rebuilds the list right here, finds the row in
+    # it, and answers "reload-sync(cat <list>)+pos(N)". fzf's own tracking
+    # (--track / --id-nth) would do that for free, but with --id-nth set,
+    # typing into a reload that hasn't finished leaves fzf loading forever —
+    # exactly what `/` followed by a fast query does.
+    local action=$1 key=$2
+    local letters=$SMARTSHOW_LETTERS
+    local -a keys=()
+    [[ -f $sdir/rows ]] && keys=(${(f)"$(<$sdir/rows)"})
+    local -a folded=()
+    [[ -f $sdir/collapsed ]] && folded=(${(f)"$(<$sdir/collapsed)"})
+    # Search mode is fzf's own input state: a marker file written by the
+    # flat reload would lose the race to an enter typed right behind `/`.
+    local -i flat=0
+    [[ ${FZF_INPUT_STATE:-hidden} != hidden ]] && flat=1
+    local k=
+    case $action in
+        h)
+            (( flat )) && return 0
+            if [[ $key == */ ]] && (( ! ${folded[(Ie)$key]} )); then
+                print -rl -- $folded $key >| $sdir/collapsed
+                smartshow_relist "$key"
+                return 0
+            fi
+            # Jump to the parent row: the longest shown directory key that
+            # is a proper prefix of this one (a compacted row's key is its
+            # deepest directory, so the prefix test still finds it).
+            local best=
+            for k in $keys; do
+                [[ $k == */ && $k != $key && $key == "$k"* && ${#k} -gt ${#best} ]] && best=$k
+            done
+            [[ -n $best ]] && print -r -- "pos(${keys[(ie)$best]})"
+            ;;
+        l)
+            (( flat )) && return 0
+            [[ $key == */ ]] || return 0
+            if (( ${folded[(Ie)$key]} )); then
+                print -rl -- ${folded:#${(b)key}} >| $sdir/collapsed
+                smartshow_relist "$key"
+            else
+                print -r -- down    # into its first child
+            fi
+            ;;
+        t)
+            smartshow_tool
+            if [[ $REPLY == difft ]]; then
+                print -r -- git >| $sdir/tool
+            elif (( $+commands[difft] )); then
+                print -r -- difft >| $sdir/tool
+            fi
+            smartshow_footer
+            print -r -- "refresh-preview+change-footer:$REPLY"
+            ;;
+        enter|esc)
+            if (( flat )); then
+                smartshow_relist "$key" "clear-query+search()+hide-input+rebind($letters)+"
+            elif [[ $action == esc ]]; then
+                print -r -- abort
+            fi
+            ;;
+        load)
+            # A reload finished: move to the row smartshow_relist parked.
+            [[ -f $sdir/pos ]] || return 0
+            print -r -- "pos($(<$sdir/pos))"
+            rm -f -- $sdir/pos
+            ;;
+        reload)
+            smartshow_relist "$key" "transform-header(cat ${(qq)sdir}/header)+"
+            ;;
+    esac
+}
+
+function smartshow_relist {
+    # Rebuild the list into $sdir/initial and print the fzf actions that load
+    # it — "<$2>reload-sync(cat ...)", $2 being any actions to run first — with
+    # the cursor to land on row key $1 parked in $sdir/pos. A pos() chained
+    # after the reload would run before the new list arrives and be reset by
+    # it, so the `load` binding, which fires once a reload completes, applies
+    # it instead (see the load key). A key the new list doesn't show — a file
+    # now inside a folded directory, or gone — lands on its nearest shown
+    # directory, else the top.
+    local key=$1 before=${2:-}
+    local -i n_files=0
+    smartshow_list >| $sdir/initial
+    local -a keys=(${(f)"$(<$sdir/rows)"})
+    local -i at=${keys[(ie)$key]}
+    if (( at > ${#keys} )); then
+        local k= best=
+        for k in $keys; do
+            [[ $k == */ && $key == "$k"* && ${#k} -gt ${#best} ]] && best=$k
+        done
+        at=1
+        [[ -n $best ]] && at=${keys[(ie)$best]}
+    fi
+    print -r -- $at >| $sdir/pos
+    print -r -- "${before}reload-sync(cat ${(qq)sdir}/initial)"
+}
+
+function smartshow_footer {
+    # REPLY = the key legend under the sidebar, two lines to fit its width;
+    # t names the renderer it switches to, not the one in use. Dim unless
+    # NO_COLOR.
+    local dim= reset=
+    [[ -z $NO_COLOR ]] && dim=$'\e[2m' reset=$'\e[0m'
+    smartshow_tool
+    local t="t → difft"
+    [[ $REPLY == difft ]] && t="t → git diff"
+    (( $+commands[difft] )) || t=
+    REPLY="${dim}j/k file  h/l fold  ↑/↓ scroll${reset}"$'\n'"${dim}/ find  ${t:+$t  }q quit${reset}"
+}
+
+function smartshow_internal {
+    # The modes fzf calls back into, picked by GIT_SMARTSHOW_MODE: list (the
+    # sidebar), preview (the diff pane for one row), key (a key binding's
+    # actions). fzf starts them in the top
+    # level smartshow_main moved to, and the view comes back from the
+    # GIT_SMARTSHOW_* variables smartshow_main exported.
+    local mode=$GIT_SMARTSHOW_MODE
+    unset GIT_SMARTSHOW_MODE
+    local sdir=$GIT_SMARTSHOW_STATE title=$GIT_SMARTSHOW_TITLE
+    [[ -d $sdir ]] || die "no smartshow state directory"
+    local -a spec=("${(@ps:\x1f:)GIT_SMARTSHOW_SPEC}")
+    local spec_mode=${spec[1]}
+    local -a spec_args=("${(@)spec[2,-1]}") pathspec=()
+    [[ -n $GIT_SMARTSHOW_PATHS ]] && pathspec=("${(@ps:\x1f:)GIT_SMARTSHOW_PATHS}")
+    local -i color_on=1 n_files=0
+    [[ -n $NO_COLOR ]] && color_on=0
+    case $mode in
+        list)
+            # "flat" is `/` switching to search; it can't go through the
+            # key handler, which would leave its unbind racing your typing.
+            local -i flat=0
+            [[ ${1:-} == flat ]] && flat=1
+            smartshow_list $flat
+            ;;
+        preview)
+            smartshow_pspec "$1" "$2"
+            smartshow_tool
+            smartshow_diff $REPLY "${FZF_PREVIEW_COLUMNS:-}" $reply
+            ;;
+        key)
+            smartshow_key "$@"
+            ;;
+        *)
+            die "unknown internal mode: $mode"
+            ;;
+    esac
+}
+
+function smartshow_main {
+    # Entry point when invoked as git-smartshow: resolve what to show, then
+    # either print it (piped, or --list) or hand the sidebar to fzf, whose
+    # callbacks re-enter this file through smartshow_internal.
+    local -a ARG_CD=() ARG_TOOL=() ARG_LIST=() ARG_HELP=() pathspec=() revs=()
+    # Everything after "--" is a pathspec; zparseopts sees only what's before.
+    local -i dd=${argv[(i)--]}
+    if (( dd <= $# )); then
+        pathspec=("${(@)argv[dd+1,-1]}")
+        argv=("${(@)argv[1,dd-1]}")
+    fi
+    zparseopts -D -E -- \
+        C+:=ARG_CD \
+        -tool:=ARG_TOOL \
+        -list=ARG_LIST \
+        {h,-help}=ARG_HELP \
+        || { smartshow_usage >&2; exit 2; }
+    (( ${#ARG_HELP} )) && { smartshow_usage; exit 0; }
+    local a=
+    for a in "$@"; do
+        [[ $a == -* ]] && { print -ru2 -- "$PROG: unknown option: $a"; smartshow_usage >&2; exit 2; }
+    done
+    revs=("$@")
+    (( ${#revs} <= 2 )) || { print -ru2 -- "$PROG: too many revisions"; smartshow_usage >&2; exit 2; }
+    cd_dash_C $ARG_CD
+
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
+        die "not a git repository"
+    # Pathspecs are given relative to where you stand; everything below runs
+    # from the top level (see cd_toplevel), so re-root them there first.
+    # Magic pathspecs (":(top)...", ":!...") already say where they start.
+    local prefix=$(git rev-parse --show-prefix 2>/dev/null)
+    if [[ -n $prefix ]]; then
+        local -i pi=0
+        for ((pi = 1; pi <= ${#pathspec}; pi++)); do
+            [[ ${pathspec[pi]} == :* ]] || pathspec[pi]=${prefix}${pathspec[pi]}
+        done
+    fi
+    cd_toplevel
+
+    local tool=${ARG_TOOL[-1]#=}
+    [[ -z $tool ]] && tool=${GIT_SMARTSHOW_TOOL:-auto}
+    case $tool in
+        auto|difft|git) ;;
+        *) print -ru2 -- "$PROG: invalid --tool: $tool (use auto, difft, or git)"; exit 2 ;;
+    esac
+    [[ $tool == difft ]] && (( ! $+commands[difft] )) && die "--tool difft: difft not found"
+
+    # What to show. No revision means @, the node the smartlog marks with @:
+    # the uncommitted changes when there are any (within the pathspec), else
+    # HEAD's own change. One revision is that commit against its first parent
+    # — git show, not git diff, because this is a viewer for the smartlog's
+    # nodes. A range or a pair is git diff's own reading.
+    local empty_tree=4b825dc642cb6eb9a060e54bf8d69288fbee4904
+    local spec_mode=diff title= sha= parent=
+    local -a spec_args=()
+    local c_dim= c_reset= c_head= c_hash=
+    if (( TTY_OUT )) && [[ -z $NO_COLOR ]]; then
+        c_dim=$'\e[2m' c_reset=$'\e[0m' c_head=$'\e[35m' c_hash=$'\e[93;1m'
+    fi
+    if (( ! ${#revs} )) && [[ -n $(git status --porcelain -- $pathspec 2>/dev/null) ]]; then
+        spec_mode=wdir
+        spec_args=(HEAD)
+        git rev-parse --verify --quiet HEAD >/dev/null 2>&1 || spec_args=($empty_tree)
+        title="@  ${c_hash}Uncommitted changes${c_reset}"
+    elif (( ${#revs} <= 1 )) && [[ ${revs[1]:-HEAD} != *..* ]]; then
+        if (( ! ${#revs} )) && ! git rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
+            print -ru2 -- "$PROG: nothing to show"    # unborn and clean
+            return 0
+        fi
+        sha=$(git rev-parse --verify --quiet "${revs[1]:-HEAD}^{commit}" 2>/dev/null) ||
+            die "${revs[1]:-HEAD}: not a commit"
+        parent=$(git rev-parse --verify --quiet "${sha}^" 2>/dev/null) || parent=$empty_tree
+        spec_args=($parent $sha)
+        local hs=
+        hs=$(git log -1 --format='%h%x1f%s' $sha 2>/dev/null)
+        title="${c_hash}${hs%%$'\x1f'*}${c_reset}  ${c_head}${hs#*$'\x1f'}${c_reset}"
+    else
+        for a in $revs; do
+            git rev-parse --quiet "$a" >/dev/null 2>&1 || die "$a: unknown revision"
+        done
+        spec_args=($revs)
+        title="${(j: → :)revs}"
+    fi
+
+    local sdir=
+    sdir=$(mktemp -d "${TMPDIR:-/tmp}/git-smartshow.XXXXXX") || die "cannot create state directory"
+    # `always` below covers every return; a signal (the terminal closing
+    # under fzf) skips it, so remove the directory there too.
+    trap "rm -rf -- ${(q)sdir}; exit 129" HUP
+    trap "rm -rf -- ${(q)sdir}; exit 143" TERM
+    {
+        local -i n_files=0 color_on=0
+        (( TTY_OUT )) && [[ -z $NO_COLOR ]] && color_on=1
+
+        # Piped, or --list: print once and leave. The piped diff uses git's
+        # own renderer unless difft was asked for by name — a diff headed for
+        # a file or another program should be one it can read back.
+        if (( ${#ARG_LIST} )); then
+            smartshow_list | cut -f3-
+            return 0
+        fi
+        if (( ! TTY_OUT )); then
+            smartshow_list >/dev/null    # builds the wdir overlay
+            [[ $tool == auto ]] && tool=git
+            smartshow_diff $tool ''
+            return 0
+        fi
+
+        (( $+commands[fzf] )) || die "needs fzf (https://github.com/junegunn/fzf)"
+        [[ $tool == auto ]] && { (( $+commands[difft] )) && tool=difft || tool=git; }
+        print -r -- $tool >| $sdir/tool
+
+        color_on=1
+        [[ -n $NO_COLOR ]] && color_on=0
+        smartshow_list >| $sdir/initial
+        if (( ! n_files )); then
+            print -ru2 -- "$PROG: nothing to show"
+            return 0
+        fi
+
+        export GIT_SMARTSHOW_STATE=$sdir GIT_SMARTSHOW_TITLE=$title
+        local -a spec=($spec_mode $spec_args)
+        export GIT_SMARTSHOW_SPEC=${(pj:\x1f:)spec}
+        export GIT_SMARTSHOW_PATHS=${(pj:\x1f:)pathspec}
+
+        local LIST PREVIEW KEY
+        smartshow_cmd list; LIST=$REPLY
+        smartshow_cmd preview; PREVIEW=$REPLY
+        smartshow_cmd key; KEY=$REPLY
+        smartshow_footer
+        local footer=$REPLY
+
+        local -a binds=(
+            'j:down' 'k:up'
+            'up:preview-up' 'down:preview-down'
+            'space:preview-page-down' 'b:preview-page-up'
+            'page-down:preview-page-down' 'page-up:preview-page-up'
+            'd:preview-half-page-down' 'u:preview-half-page-up'
+            'g:preview-top' 'G:preview-bottom'
+            "h:transform:$KEY h {1}" "left:transform:$KEY h {1}"
+            "l:transform:$KEY l {1}" "right:transform:$KEY l {1}"
+            "t:transform:$KEY t {1}"
+            "/:show-input+unbind($SMARTSHOW_LETTERS)+reload($LIST flat)"
+            "enter:transform:$KEY enter {1}"
+            "esc:transform:$KEY esc {1}"
+            "ctrl-r:transform:$KEY reload {1}"
+            "load:transform:$KEY load"
+            'q:abort'
+        )
+        local -a fzf_args=(
+            --ansi --no-sort --layout=reverse --no-input --no-multi
+            --delimiter=$'\t' --with-nth=3
+            --with-shell='sh -c'
+            --header="$(<$sdir/header)" --footer="$footer"
+            --preview="$PREVIEW {1} {2}"
+            --preview-window='right,70%,border-left,<60(down,60%,border-top)'
+            --prompt='find: '
+        )
+        local bd=
+        for bd in $binds; do fzf_args+=(--bind="$bd"); done
+        fzf "${fzf_args[@]}" < $sdir/initial >/dev/null
+        return 0
+    } always {
+        rm -rf -- "$sdir"
+    }
+}
+
 function stream_or_print {
     # The paging decision, line-granular and stream-preserving: buffer stdin
     # only until it either ends (fits on screen → print it straight) or hits
@@ -2415,9 +3082,17 @@ function run_paged {
 }
 
 # Multi-call dispatch on the invocation name: git-smartstat runs only the stat
-# block, anything else (git-smartlog) runs the full smartlog paged (see
-# run_paged; smartstat's block is short and feeds scripts, so it never pages).
+# block, git-smartshow the file-tree diff browser, anything else (git-smartlog)
+# runs the full smartlog paged (see run_paged; smartstat's block is short and
+# feeds scripts, so it never pages, and smartshow brings its own fzf UI).
+# Ahead of the name, GIT_SMARTSHOW_MODE marks one of smartshow's fzf callbacks,
+# which run this file by its resolved path whatever it was invoked as.
+if [[ -n ${GIT_SMARTSHOW_MODE:-} ]]; then
+    smartshow_internal "$@"
+    exit
+fi
 case $PROG in
     git-smartstat|smartstat) smartstat_main "$@" ;;
+    git-smartshow|smartshow) smartshow_main "$@" ;;
     *)                       run_paged main "$@" ;;
 esac

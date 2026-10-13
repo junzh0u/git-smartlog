@@ -2,8 +2,8 @@
 
 ## Layout
 
-- `git-smartlog` — the entire tool: one self-contained zsh script with no dependencies beyond zsh + git (`gh` opt-in for `-p`). `git-smartstat` is a symlink to it; the file is multi-call and dispatches on `$PROG`.
-- `completions/` — zsh completions (`_git-smartlog`, `_git-smartstat`).
+- `git-smartlog` — the entire tool: one self-contained zsh script with no dependencies beyond zsh + git (`gh` opt-in for `-p`). `git-smartstat` and `git-smartshow` are symlinks to it; the file is multi-call and dispatches on `$PROG`. `git-smartshow` alone needs `fzf` (and uses `difft` when installed); its interactive UI re-enters the same file through fzf callbacks keyed on `GIT_SMARTSHOW_MODE`.
+- `completions/` — zsh completions (`_git-smartlog`, `_git-smartstat`, `_git-smartshow`).
 - `dev/make-demo.zsh` — builds a throwaway demo repo exercising every signal the views render; the README's text examples are captures from it. When an example needs something the demo can't show, the fix is to teach make-demo.zsh to produce it — not to build a second repo beside it. (That is how the untracked-directory collapse and the draft-forking branches got there.)
 - `dev/make-fixtures.zsh` — builds the repo states the README examples are captured from: `demo` (make-demo.zsh's dirty tree) and `demo-clean` (the same commits, pristine). Deliberately only two.
 - `test/test-readme-examples.zsh` — replays every example in the README and diffs it against what the script prints now; `--update` re-captures them all. The README is the golden file, so there is no second copy to drift. Hashes and relative timestamps are normalized away; everything else is exact. The shell half owns fixtures and env hygiene; the comparing lives in `test/readme_examples.py` beside it.

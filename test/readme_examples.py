@@ -56,7 +56,7 @@ def normalize(text):
 
 def run_example(repo, fixtures, fixture, command):
     words = command.split()
-    if words[:1] != ["git"] or words[1:2] not in (["smartlog"], ["smartstat"]):
+    if words[:1] != ["git"] or words[1:2] not in (["smartlog"], ["smartstat"], ["smartshow"]):
         sys.exit(f"FAIL: don't know how to run '{command}'")
     cwd = os.path.join(fixtures, fixture)
     if not os.path.isdir(cwd):

@@ -1,6 +1,6 @@
 # git-smartlog
 
-A [Sapling](https://sapling-scm.com/)-inspired `smartlog` for plain Git, in a single self-contained zsh script. The same file doubles as [`git-smartstat`](#git-smartstat), a standalone view of uncommitted changes.
+A [Sapling](https://sapling-scm.com/)-inspired `smartlog` for plain Git, in a single self-contained zsh script. The same file doubles as [`git-smartstat`](#git-smartstat), a standalone view of uncommitted changes, and [`git-smartshow`](#git-smartshow), a two-pane diff browser: the changed files as a tree on the left, the selected file's diff on the right.
 
 It renders the current branch's **draft stack** — the first-parent chain of your local (unpushed) commits — drawn on top of its nearest **public** (pushed) base, with relative timestamps, authors, and ref decorations. A dirty working tree always draws an uncommitted-changes node on top, listing what you changed, and three independent flags — `-c` for per-file change stats under your commits, `-b` to fold your other local branches into the graph as full stacks, `-f` to stop abbreviating anything — combine freely. See below.
 
@@ -411,7 +411,7 @@ In a real terminal the output is colorized — draft hashes in bold yellow, `HEA
 - `zsh`
 - `git`
 
-That's it. The script sources nothing else, so you can drop it anywhere on your `PATH` and run it — the uncommitted node included, since its stat block is computed in-file (see [git-smartstat](#git-smartstat)). The one opt-in extra is `-p`/`--prs`, which needs the [GitHub CLI (`gh`)](https://cli.github.com/); everything else works without it.
+That's it. The script sources nothing else, so you can drop it anywhere on your `PATH` and run it — the uncommitted node included, since its stat block is computed in-file (see [git-smartstat](#git-smartstat)). The opt-in extras: `-p`/`--prs` needs the [GitHub CLI (`gh`)](https://cli.github.com/), and `git-smartshow` needs [`fzf`](https://github.com/junegunn/fzf) (plus [difftastic](https://difftastic.wilfred.me.uk/) if you want structural diffs in it). Everything else works without them.
 
 ## Install
 
@@ -419,8 +419,9 @@ That's it. The script sources nothing else, so you can drop it anywhere on your 
 curl -fsSL https://raw.githubusercontent.com/junzh0u/git-smartlog/main/git-smartlog \
   -o ~/.local/bin/git-smartlog
 chmod +x ~/.local/bin/git-smartlog
-# optional: the same file doubles as `git smartstat` (see below)
+# optional: the same file doubles as `git smartstat` and `git smartshow` (see below)
 ln -s git-smartlog ~/.local/bin/git-smartstat
+ln -s git-smartlog ~/.local/bin/git-smartshow
 ```
 
 Because the script is named `git-smartlog` and lives on your `PATH`, Git picks it up as a subcommand — run it as `git smartlog`. A short alias is handy:
@@ -429,17 +430,18 @@ Because the script is named `git-smartlog` and lives on your `PATH`, Git picks i
 git config --global alias.sl smartlog
 ```
 
-Zsh completions live in [`completions/`](completions/): put `_git-smartlog` and `_git-smartstat` in a directory on your `fpath` before `compinit` runs. They complete the direct commands, and — with zsh's own `_git` — the `git smartlog` / `git smartstat` subcommand forms too; add the subcommand *names* to `git <TAB>` with:
+Zsh completions live in [`completions/`](completions/): put `_git-smartlog`, `_git-smartstat` and `_git-smartshow` in a directory on your `fpath` before `compinit` runs. They complete the direct commands, and — with zsh's own `_git` — the `git smartlog` / `git smartstat` / `git smartshow` subcommand forms too; add the subcommand *names* to `git <TAB>` with:
 
 ```sh
 zstyle ':completion:*:*:git:*' user-commands \
     smartlog:'draft stack over its public base' \
-    smartstat:'uncommitted working-tree stat block'
+    smartstat:'uncommitted working-tree stat block' \
+    smartshow:'file tree beside the diff'
 ```
 
 ## Usage
 
-Both commands take `-C <path>`, exactly as git does — run as if started in that directory, repeats composing — so you can point them at a repo without leaving the one you're in.
+All three commands take `-C <path>`, exactly as git does — run as if started in that directory, repeats composing — so you can point them at a repo without leaving the one you're in.
 
 ```
 usage: git-smartlog [-C <path>] [-c] [-b] [-f] [-m] [-p|-P] [--base REV]
@@ -550,6 +552,71 @@ A wholly-untracked directory collapses to a single entry — the way `git status
 Paths are shown in full up to your terminal width; like `git diff --stat`, they shorten to a leading `...tail` only when the terminal is too narrow to fit them (piped output uses git's 80-column default).
 
 It prints nothing when the working tree is clean. Both names share one in-file function (`uncommitted_stat`), so there's no duplicated logic and `git-smartlog` stays a single self-contained file — the node needs nothing external. (Standalone, `git-smartstat` also works in a repo with no commits yet, diffing against the empty tree so staged and untracked files still show as additions.)
+
+## git-smartshow
+
+A diff browser laid out like a code-review page: the changed files as a tree in a sidebar, the selected file's diff in the main pane beside it. It's the third name for the same file, and it needs [`fzf`](https://github.com/junegunn/fzf), which draws both panes:
+
+```sh
+ln -s git-smartlog ~/.local/bin/git-smartshow
+```
+
+```
+usage: git-smartshow [-C <path>] [--tool TOOL] [--list] [<rev> | <rev>..<rev> | <rev> <rev>] [-- <path>...]
+
+Browse a diff as a file tree beside the diff itself: the changed files in a
+sidebar on the left, the selected file's diff in the main pane on the right
+(needs fzf). With no revision it shows @ — the working copy's uncommitted
+changes, untracked files included, or HEAD's own change when the tree is
+clean. One revision shows that commit's change against its first parent, like
+git show; a range or two revisions show the diff between them, like git diff.
+Sidebar names carry git-smartstat's change markers and colors.
+
+  j / k               next / previous file
+  h / l               fold / unfold a directory (h on a file jumps to its directory)
+  ↑ / ↓               scroll the diff; space / b a page, d / u half a page,
+                      g / G to either end
+  t                   switch between difftastic and git's own diff
+  /                   find a path (enter or esc returns to the tree)
+  ctrl-r              reload after the working tree changed
+  q, esc              quit
+
+      --tool TOOL     diff renderer: auto (default — difft when installed), difft,
+                      or git; $GIT_SMARTSHOW_TOOL sets the default
+      --list          print the sidebar's file tree and exit
+  -C <path>           run as if started in <path>, like git's own -C
+  -h, --help          show this help and exit
+
+Piped, it prints the diff once and exits, like git diff.
+```
+
+With no arguments it opens `@` — the node `git smartlog` marks `@`. On a dirty tree that's the uncommitted changes, and the sidebar lists exactly the files the uncommitted node does, with the same markers and colors. Untracked files diff as new files through the same throwaway index, and an untracked directory unfolds into its files, since the tree can fold it back. The sidebar is what `--list` prints:
+
+<!-- fixture: demo -->
+```text
+$ git smartshow --list
+▾ coverage/  +2
+  ? http_client.out  +1
+  ? retry.out  +1
+▾ scripts/
+  M release.sh +x
+▾ vendor/  +1 -1
+  S timeutil  +1 -1
+A metrics.go  +7
+? retry_test.go  +9
+M http_client.go  +1 -1
+M retry.go  +7 -1
+D legacy.go  -6
+R log.go  ← logging.go
+T config.json  +1 -4
+U version.go  +4
+```
+
+Directories come first, then files in the stat block's group order. A chain of directories that holds nothing but one more directory compresses into a single row, the way editors show compact folders. Selecting a directory row shows the diff of everything under it.
+
+The diff pane uses [difftastic](https://difftastic.wilfred.me.uk/) when `difft` is on your `PATH`, sized to the pane, so a wide terminal gets difft's side-by-side view. `t` switches to git's own colored diff and back. difft runs as git's external diff, so git still handles rename pairing, pathspecs and the untracked overlay either way.
+
+Piped, `git smartshow` prints the diff once and exits — git's renderer unless `--tool difft` asks otherwise — so `git smartshow | less` and `git smartshow HEAD~2 > change.diff` behave like their git counterparts, untracked files included.
 
 ## How it works
 

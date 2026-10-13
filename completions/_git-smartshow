@@ -1,0 +1,35 @@
+#compdef git-smartshow
+# Completion for git-smartshow (the multi-call file-tree diff browser of
+# git-smartlog). The _git-<subcommand> name also covers `git smartshow`.
+
+_git-smartshow_revs() {
+    # Revisions before "--". Inside `git smartshow` completion the _git
+    # helpers are loaded — use the real commit completer; standalone they may
+    # not be, so fall back to plain ref names.
+    if (( $+functions[__git_commits] )); then
+        __git_commits
+    else
+        local -a refs
+        refs=(HEAD ${(f)"$(_call_program references \
+            "git for-each-ref --format='%(refname:short)' refs/heads refs/remotes 2>/dev/null")"})
+        local expl
+        _description -V references expl 'revision'
+        compadd "${expl[@]}" -a refs
+    fi
+}
+
+_git-smartshow() {
+    # Past "--" every word is a path.
+    if (( ${words[(I)--]} && ${words[(I)--]} < CURRENT )); then
+        _files
+        return
+    fi
+    _arguments -s -S \
+        '--tool=[diff renderer]:tool:(auto difft git)' \
+        '--list[print the sidebar file tree and exit]' \
+        '*-C+[run as if started in <path>, like git'\''s own -C]:directory:_directories' \
+        '(- *)'{-h,--help}'[show help and exit]' \
+        '*:revision:_git-smartshow_revs'
+}
+
+_git-smartshow "$@"

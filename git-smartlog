@@ -1131,8 +1131,25 @@ function uncommitted_stat {
             (( avail > cap )) && avail=cap
             (( avail < 4 )) && avail=4
             name_w=$avail
-            # File counts come from the full recursive untracked list.
-            local -a all_untracked=(${(f)"$(git ls-files --others --exclude-standard 2>/dev/null)"})
+            # File counts: one listing scoped to the collapsed dirs, each file
+            # credited to the nearest of its ancestors that is one — exactly
+            # one is, since --directory reports only the outermost wholly-
+            # untracked dirs. Linear in the files, where matching every file
+            # against every dir was not. Literal pathspecs, so a dir named
+            # with glob characters lists only itself.
+            local -A dir_files=()
+            local f= up=
+            for d in $untracked_dirs; do dir_files[$d]=0; done
+            for f in ${(f)"$(git --literal-pathspecs ls-files --others --exclude-standard -- $untracked_dirs 2>/dev/null)"}; do
+                up=$f
+                while [[ $up == */* ]]; do
+                    up=${up%/*}
+                    if (( ${+dir_files[$up/]} )); then
+                        dir_files[$up/]=$(( ${dir_files[$up/]} + 1 ))
+                        break
+                    fi
+                done
+            done
             # Pass 1: compute each dir's display name and file count, tracking the
             # widest count. When there are NO git --stat lines (count_w==0), the dirs
             # have nothing to align to, so fall back to that widest dir count and
@@ -1141,7 +1158,7 @@ function uncommitted_stat {
             # with more files than git's widest line count is the only case that can
             # still overhang — git's numbers are already printed, so they can't grow).
             local -a dir_disp=() dir_n=() dir_path=()
-            local disp= n= f= max_dir_w=0
+            local disp= n= max_dir_w=0
             for d in $untracked_dirs; do
                 disp=$d
                 if (( ${(m)#disp} > avail )); then
@@ -1150,8 +1167,7 @@ function uncommitted_stat {
                     while (( ${(m)#disp} > avail - 3 )); do disp=${disp[2,-1]}; done
                     disp="...$disp"
                 fi
-                n=0
-                for f in $all_untracked; do [[ ${f[1,${#d}]} == "$d" ]] && (( ++n )); done
+                n=${dir_files[$d]}
                 dir_disp+=("$disp"); dir_n+=("$n"); dir_path+=("$d")
                 (( ${#n} > max_dir_w )) && max_dir_w=${#n}
             done

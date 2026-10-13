@@ -845,6 +845,15 @@ function classify_change {
     REPLY=$mark REPLY_COL=$col REPLY_HINT=$hint
 }
 
+function unmerged_paths {
+    # reply = the conflicted paths (within pathspec $@), root-relative. Not
+    # from `git status --porcelain`, which wraps a path holding a space in
+    # quotes even with quotePath off, so a conflicted "a b.txt" never matched
+    # its diff record and showed M instead of U.
+    reply=("${(@0)$(git diff --name-only --diff-filter=U -z -- "$@" 2>/dev/null)}")
+    reply=(${reply:#})
+}
+
 function overlay_index {
     # Build a throwaway index at $1: a copy of the index at $2 (skipped when
     # it doesn't exist — an unborn repo) with the paths $3.. intent-to-added,
@@ -1134,14 +1143,14 @@ function uncommitted_stat {
             local u
             for u in $untracked_files; do is_untracked[$u]=1; done
             # Conflicted paths show as plain M in `git diff --raw`, so take the
-            # unmerged set from porcelain status codes (DD/AU/UD/UA/DU/AA/UU) instead.
+            # unmerged set separately (working-tree mode only — a commit has no
+            # conflicts).
             local -A is_unmerged
             local pl
-            for pl in ${(f)porcelain}; do
-                case ${pl[1,2]} in
-                    DD|AU|UD|UA|DU|AA|UU) is_unmerged[${pl[4,-1]}]=1 ;;
-                esac
-            done
+            if [[ -z $commit ]]; then
+                unmerged_paths
+                for pl in $reply; do is_unmerged[$pl]=1; done
+            fi
 
             local raw_line
             for raw_line in $raw_lines; do
@@ -2652,11 +2661,8 @@ function smartshow_collect {
         for u in $untracked; do is_untracked[$u]=1; done
         rm -f -- $sdir/index
         overlay_index $sdir/index "$(git rev-parse --git-path index 2>/dev/null)" $untracked
-        for pl in ${(f)"$(git status --porcelain -- $pathspec 2>/dev/null)"}; do
-            case ${pl[1,2]} in
-                DD|AU|UD|UA|DU|AA|UU) is_unmerged[${pl[4,-1]}]=1 ;;
-            esac
-        done
+        unmerged_paths $pathspec
+        for pl in $reply; do is_unmerged[$pl]=1; done
     fi
     local -a tok=("${(@0)$(smartshow_git diff --no-ext-diff --raw --numstat -z $spec_args -- $pathspec 2>/dev/null)}")
     local -i i=1 k=0 n=${#tok}

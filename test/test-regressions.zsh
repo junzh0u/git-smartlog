@@ -48,6 +48,19 @@ git update-ref refs/remotes/origin/main HEAD
 expect "--base=REV resolves like --base REV" \
     "$("$REPO/git-smartlog" --base=origin/main 2>&1)" '@  * origin/main'
 
+# A conflicted path holding a space: porcelain quotes it, so it used to miss
+# the unmerged set and show M.
+new_repo conflict-space
+print a >| 'a b.txt'
+git add . && git commit -qm base
+git checkout -qb side && print side >| 'a b.txt' && git commit -qam side
+git checkout -q main && print main >| 'a b.txt' && git commit -qam main
+git merge -q side >/dev/null 2>&1 || true
+expect "smartstat marks a conflicted spaced path U" \
+    "$("$REPO/git-smartstat")" ' U a b.txt *'
+expect "smartshow marks a conflicted spaced path U" \
+    "$("$REPO/git-smartshow" --list)" 'U a b.txt *'
+
 print
 if (( failures )); then
     print -r -- "$failures of $checks regression checks failed"

@@ -41,8 +41,9 @@
 #     A branch merged into the trunk labels that commit instead of adding a
 #     node; a branch whose same-name remote ref sits at the same commit shows
 #     only the remote name (same rule as the active branch). Public commits
-#     jumped over between fork points elide to a dotted ╷ spine, and a tree
-#     bends ╭─╯ off a dotted-or-empty spine but forks ├─╯ off a solid one. When
+#     jumped over between fork points elide to a dotted ╷ spine (-f fills
+#     the small gaps), and a tree bends ╭─╯ off a dotted-or-empty spine but
+#     forks ├─╯ off a solid one. When
 #     the tree is dirty the wdir node draws directly above HEAD at HEAD's depth.
 #   - Long subjects are shown in full — never truncated to the terminal width,
 #     so a long one wraps instead of ending in an ellipsis. On a TTY the wrap
@@ -99,7 +100,8 @@
 #     column, side subtrees one column deeper per fork level. With -b the public
 #     window always anchors at the trunk tip, and the merge-base plus every
 #     tree's fork point are added to it; commits jumped over between shown
-#     publics render as a dotted ╷ spine
+#     publics render as a dotted ╷ spine — except under -f, which fills a gap
+#     of at most $GIT_SMARTLOG_GAP_FILL commits (default 10)
 #
 # Format per commit
 #   <symbol>  <hash:10>  <reltime>  <author>  [<refs>]
@@ -282,12 +284,15 @@
 #   also un-compacts other authors' public headers and lifts the 10-line cap on
 #   a submodule entry's sub-lines (SUBLINE_CAP), all the way down through a
 #   nested submodule.
-#   What -f deliberately does NOT undo is -b's ╷ elision. This tail streams
-#   lazily and only downward, so its cost is paid one row at a time as you
-#   scroll; filling the gaps BETWEEN fork points is eager and unbounded — a
-#   branch forking 200 commits down the trunk would push every other tree off
-#   screen before you saw it. The ╷ exists to keep distant fork points
-#   adjacent, which is the whole point of the -b view.
+#   What -f only partly undoes is -b's ╷ elision. This tail streams lazily
+#   and only downward, so its cost is paid one row at a time as you scroll;
+#   filling the gaps BETWEEN fork points is eager — a branch forking 200
+#   commits down the trunk would push every other tree off screen before you
+#   saw it. So -f fills a gap only when it is small: at most
+#   $GIT_SMARTLOG_GAP_FILL commits (default 10; 0 never fills), where the
+#   elision would hide more context than it saves room. A wider gap keeps its
+#   ╷, which exists to keep distant fork points adjacent — the whole point of
+#   the -b view.
 #
 # Relative time — mirrors sapling's `smartdate(date, 5400, age, simpledate)`:
 #   - Elapsed <= 5400s (90 min): `age()` — walks scales year→second and uses the
@@ -419,8 +424,9 @@ The view flags below are independent and combine freely.
                       render metadata-only), keep streaming older
                       public history below the base — lazily when paged, like
                       git log — and stop capping a submodule entry's sub-lines
-                      at 10 (-b's ╷ elision stays — it keeps distant fork
-                      points adjacent, which is the point of that view)
+                      at 10; with -b, also fill a ╷ gap between fork points
+                      when it hides at most \$GIT_SMARTLOG_GAP_FILL commits
+                      (default 10; 0 never fills) — wider gaps stay elided
   -m, --message       show full commit messages: body lines render dim under
                       each subject — every commit in view, except public
                       commits compacted to metadata-only (lift with -f)
@@ -1924,6 +1930,31 @@ function main {
             done
         else
             publics=($shown)
+        fi
+        # -f fills the small gaps: when the next shown public sits at most
+        # $GIT_SMARTLOG_GAP_FILL commits (default 10; 0 never fills) down this
+        # one's first-parent chain, the commits between join the column and the
+        # segment goes solid. A wider gap keeps its ╷ elision — see the
+        # infinite-scroll note in the header for why -f doesn't fill those.
+        # One bounded walk per gap: -n stops it one past the limit, and the
+        # chain must land on the next public, else that public isn't on this
+        # one's first-parent line and there is nothing to fill.
+        local gap_fill=${GIT_SMARTLOG_GAP_FILL:-10}
+        [[ $gap_fill == <-> ]] || gap_fill=10
+        if (( full && gap_fill > 0 && ${#publics} > 1 )); then
+            local -a filled=() gap=()
+            local -i gi=0
+            for ((gi = 1; gi < ${#publics}; gi++)); do
+                filled+=("${publics[gi]}")
+                gap=("${(@f)$(git rev-list --first-parent --parents -n $(( gap_fill + 2 )) \
+                    "${publics[gi]}" "^${publics[gi+1]}" 2>/dev/null)}")
+                # gap[1] is this public itself; gap[2..] the commits between.
+                (( ${#gap} >= 2 && ${#gap} <= gap_fill + 1 )) || continue
+                [[ ${${=gap[-1]}[2]:-} == ${publics[gi+1]} ]] || continue
+                filled+=("${(@)gap[2,-1]%% *}")
+            done
+            filled+=("${publics[-1]}")
+            publics=($filled)
         fi
     else
         publics=("${(@f)$(git rev-list --first-parent "$base_ref" -n 1)}")

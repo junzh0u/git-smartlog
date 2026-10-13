@@ -228,7 +228,7 @@ $ git smartlog -c
 ~
 ```
 
-With `-b` / `--branches`, every **other local branch** joins the graph too, each rendering its **complete stack**. All heads' chains union into a forest, so a branch **forking from a draft commit** shows as a real fork, and commits **stacked above `HEAD`** — a branch containing `HEAD` while you're checked out mid-stack — appear too, with `@` drawn mid-tree. Fork points join the public column no matter how far down they sit, and commits skipped between them elide to a dotted `╷` spine. Two rules keep the graph quiet: a branch merged into the trunk just labels that commit instead of adding a node (`prod` below), and a branch whose same-name remote ref sits at the same commit shows only the remote name (`origin/hotfix`). Branch names render **cyan**, so they stand apart from green remote refs and the yellow active branch. Everything composes with `-c` and with the `-f` used here, which gives Alice's public commits their full headers and keeps the trunk streaming past the base:
+With `-b` / `--branches`, every **other local branch** joins the graph too, each rendering its **complete stack**. All heads' chains union into a forest, so a branch **forking from a draft commit** shows as a real fork, and commits **stacked above `HEAD`** — a branch containing `HEAD` while you're checked out mid-stack — appear too, with `@` drawn mid-tree. Fork points join the public column no matter how far down they sit, and commits skipped between them elide to a dotted `╷` spine. Two rules keep the graph quiet: a branch merged into the trunk just labels that commit instead of adding a node (`prod` below), and a branch whose same-name remote ref sits at the same commit shows only the remote name (`origin/hotfix`). Branch names render **cyan**, so they stand apart from green remote refs and the yellow active branch. Everything composes with `-c` and with the `-f` used here, which gives Alice's public commits their full headers, fills in the one trunk commit between `origin/master` and `fix/redirect-loop`'s fork point, and keeps the trunk streaming past the base:
 
 <!-- fixture: demo -->
 ```text
@@ -259,45 +259,48 @@ $ git smartlog -b -f
   │      › v1.1.0
   │  U version.go           | 4 ++++
   │
-  o  9c88963f33  14 minutes ago  junz  feat/retry-backoff*
+  o  42216c35a5  14 minutes ago  junz  feat/retry-backoff*
   │  Wire backoff into the HTTP client
   │
-  o  edb0dc38e9  Today at 12:11  junz  wip/backoff
+  o  57daeb2140  Today at 08:02  junz  wip/backoff
   │  Add exponential backoff with jitter
   │
-  o  d1a3bfbf91  Today at 10:11  junz
+  o  4df6239fc9  Today at 06:02  junz
   │  (empty) Require golang.org/x/time
   │
-  │ o  ba349a0ba4  Yesterday at 21:11  junz  spike/http3
+  │ o  ddf1350b1d  Yesterday at 17:02  junz  spike/http3
   │ │  Spike HTTP/3 transport
   │ │
-  │ │ o  bda5ff01ae  Yesterday at 20:11  junz  refactor/timeouts
+  │ │ o  edb584afbf  Yesterday at 16:02  junz  refactor/timeouts
   │ ├─╯  Let callers override the attempt timeout
   │ │
-  │ o  ced6e89fda  Yesterday at 19:11  junz
+  │ o  411fccf502  Yesterday at 15:02  junz
   ├─╯  Bound each attempt with a timeout
   │
-  o  469c357174  Yesterday at 15:11  junz
+  o  0c9d82941c  Yesterday at 11:02  junz
 ╭─╯  Extract retry policy into its own module
 │
-│ ◇  d98069450f  Tuesday at 15:11  junz  origin/hotfix
+│ ◇  5ddd520d79  Sunday at 11:02  junz  origin/hotfix
 ├─╯  Patch release 0.1.1
 │
-◆  f5ad6667d7  Monday at 15:11  junz  origin/master
-╷  Bump dependencies
-╷
-╷ o  f02cdf421c  Yesterday at 14:11  junz  fix/redirect-loop
-╷ │  Abort redirect loops via CheckRedirect
-╷ │
-╷ o  abb3ea8725  Yesterday at 13:11  junz
-╭─╯  Cap redirect chains at 10 hops
+◆  f134637b2e  Saturday at 11:02  junz  origin/master
+│  Bump dependencies
 │
-◆  1307e0e4e5  Saturday at 15:11  alice  prod
+◆  5b149b2ab4  Friday at 11:02  alice
+│  Introduce typed errors
+│
+│ o  e9a4f7c8de  Yesterday at 10:02  junz  fix/redirect-loop
+│ │  Abort redirect loops via CheckRedirect
+│ │
+│ o  574ef1b7bd  Yesterday at 09:02  junz
+├─╯  Cap redirect chains at 10 hops
+│
+◆  8a6c2f1a46  Thursday at 11:02  alice  prod
 │  Initial project scaffold
 ~
 ```
 
-At each fork the spine child (the one on `HEAD`'s path, else the newest subtree) continues the column and every other child opens a column one level deeper, newest first, closing with a `├─╯` bend right above the fork. Narrow the public window back to the default and the elision shows up too:
+At each fork the spine child (the one on `HEAD`'s path, else the newest subtree) continues the column and every other child opens a column one level deeper, newest first, closing with a `├─╯` bend right above the fork. Drop `-f` and the public window narrows back to the fork points themselves, so the trunk commit between them elides:
 
 <!-- fixture: demo -->
 ```text
@@ -366,7 +369,7 @@ $ git smartlog -b
 ~
 ```
 
-Here `refactor/timeouts` forks off a draft of the current stack and `spike/http3` off a draft of *that* branch, so the layout nests one level further. Sibling subtrees render newest-first, and the child on `HEAD`'s path continues the column. Below `origin/master`, `fix/redirect-loop`'s fork point sits two commits down the trunk, so the commit between them elides to the dotted `╷` spine. A dirty working tree draws its uncommitted node directly above `HEAD`, wherever `HEAD` sits in the tree.
+Here `refactor/timeouts` forks off a draft of the current stack and `spike/http3` off a draft of *that* branch, so the layout nests one level further. Sibling subtrees render newest-first, and the child on `HEAD`'s path continues the column. Below `origin/master`, `fix/redirect-loop`'s fork point sits two commits down the trunk, so the commit between them elides to the dotted `╷` spine. `-f` fills a gap like that back in when it hides at most `$GIT_SMARTLOG_GAP_FILL` commits (default 10; `0` never fills); a wider one stays elided either way. A dirty working tree draws its uncommitted node directly above `HEAD`, wherever `HEAD` sits in the tree.
 
 `--base REV` moves the bottom of the graph. The base is normally auto-detected — the nearest remote trunk — which covers `origin/main`, `origin/master` and a correctly-set `origin/HEAD`, and nothing else: a repo whose trunk is `develop` or `release/2.x`, or whose `origin/HEAD` is missing or stale after a rename, needs to be told. Here it's pointed at `prod`, the branch parked on the oldest public commit in the `-b` views above:
 
@@ -455,7 +458,8 @@ The view flags below are independent and combine freely.
   -i, --interactive   browse the graph in fzf: j/k step between commits, enter
                       opens the selected one in git-smartshow (the
                       uncommitted node opens the working copy), ? toggles its
-                      stat, / finds a row (needs fzf)
+                      stat, / finds a row (needs fzf; off a terminal it
+                      prints the plain view, so it is safe in an alias)
   -c, --changes       show per-file changes under every commit in the current
                       stack — or under the public commit in view when HEAD
                       sits on the trunk (pair with -f for history); the
@@ -469,8 +473,9 @@ The view flags below are independent and combine freely.
                       render metadata-only), keep streaming older
                       public history below the base — lazily when paged, like
                       git log — and stop capping a submodule entry's sub-lines
-                      at 10 (-b's ╷ elision stays — it keeps distant fork
-                      points adjacent, which is the point of that view)
+                      at 10; with -b, also fill a ╷ gap between fork points
+                      when it hides at most $GIT_SMARTLOG_GAP_FILL commits
+                      (default 10; 0 never fills) — wider gaps stay elided
   -m, --message       show full commit messages: body lines render dim under
                       each subject — every commit in view, except public
                       commits compacted to metadata-only (lift with -f)
@@ -638,13 +643,13 @@ Piped, `git smartshow` prints the diff once and exits — git's renderer unless 
 - **`(empty)`** — a commit whose tree equals its first parent's (the empty tree for a root commit) gets its subject prefixed `(empty)`, and no `-c` body. jj labels these in its log; git doesn't, so an emptied commit looks like any other. Decided from tree hashes, not diffs: `%T` rides along with the metadata every row already fetches, and the handful of parents outside the window are fetched in one batch rather than a `rev-parse` per row. In the `-f` tail, where there is no window to batch over, rows are held one behind — in a first-parent walk the next record *is* the previous row's parent.
 - **Uncommitted changes** — whenever `git status` is non-empty, a synthetic node on top of `HEAD` carrying compact totals plus per-file `git diff --stat HEAD` bars; the `@` marker moves there. Borrowed from jj, where the working copy *is* a commit and needs no synthesis. The bars need no flag, unlike a commit's: a commit's subject already says what it did, so `-c` is an ask; the working copy has no subject, so its files *are* the description. Totals and bars alike are computed against a throwaway index overlay that intent-to-adds loose untracked files so they're folded in without mutating the repo (a wholly-untracked directory instead collapses to one `dir/ | N files` entry, like `git status`). Each body filename gets a one-letter change marker (`A`/`?`/`M`/`D`/`R`/`T`/`S`/`U`, from `git diff --raw`, plus the porcelain status for conflicts) colored by kind (see the marker table above), and a `+x`/`-x` hint on executable-bit flips. This block is computed by the in-file `uncommitted_stat` function — the same code the [`git-smartstat`](#git-smartstat) command runs.
 - **Public window** — one commit: the base, with `~` below it. `-f` streams the history below instead.
-- **Other branches** — with `-b`/`--branches`, every head's first-parent chain is unioned into a forest of draft trees (shared prefixes dedup), each rendered above its root's public fork point: the spine child continues the column, side subtrees open one column deeper per fork level and close with a `├─╯` bend above the fork. Sibling subtrees order by newest commit date and the spine prefers `HEAD`'s path — Git has no revision numbers to sort by. Includes commits stacked above `HEAD`. Fork points are added to the public column no matter how far down they sit, with commits skipped between them eliding to a dotted `╷` spine. Branch names render cyan so they stand apart from green remote refs. Two branches don't get a node of their own: one merged into the trunk (its head *is* the merge-base) labels that public commit instead, and one whose same-name remote ref sits at the same commit shows only the remote name.
+- **Other branches** — with `-b`/`--branches`, every head's first-parent chain is unioned into a forest of draft trees (shared prefixes dedup), each rendered above its root's public fork point: the spine child continues the column, side subtrees open one column deeper per fork level and close with a `├─╯` bend above the fork. Sibling subtrees order by newest commit date and the spine prefers `HEAD`'s path — Git has no revision numbers to sort by. Includes commits stacked above `HEAD`. Fork points are added to the public column no matter how far down they sit, with commits skipped between them eliding to a dotted `╷` spine — unless `-f` is on and the gap is at most `$GIT_SMARTLOG_GAP_FILL` commits (default 10; `0` never fills), in which case they render in full. Branch names render cyan so they stand apart from green remote refs. Two branches don't get a node of their own: one merged into the trunk (its head *is* the merge-base) labels that public commit instead, and one whose same-name remote ref sits at the same commit shows only the remote name.
 - **PR numbers** — with `-p`/`--prs`, every branch name shown on a commit (the active branch, a remote bookmark, or a `-b` local) that has a GitHub PR gets a trailing `#N` tag: blue for open, dim blue for draft, magenta for merged, red for closed — and, on a color-capable TTY, an OSC 8 hyperlink to the PR. One `gh pr list --state all` call maps branches to PRs (a branch with several keeps an open one over closed/merged, else the newest); the trunk's own branch is skipped so its long-merged PR doesn't tag every graph. The call's ~1s API round-trip is cached per repo in the git dir for `$GIT_SMARTLOG_PR_TTL` seconds (default 60; `0` forces a refetch), so only the first `-p` run in a while pays it. Needs the GitHub CLI (`gh`); a failed listing warns and falls back to the stale cache, else renders without tags. `-p` is sticky per repo — it drops a marker file in the git dir (`smartlog-pr-on`), so later runs tag PRs without the flag; `-P`/`--no-prs` removes the marker and turns tagging off (winning when both are given). When tagging is on only via the marker, a missing `gh` warns instead of erroring, so plain runs keep working on a machine without it.
 - **Subjects** — shown in full, never truncated to the terminal width, so a long one wraps rather than ending in an ellipsis. On a TTY the wrap is the renderer's own: word-boundary continuation rows that keep the gutter and align under the subject column. Piped output leaves the line whole.
 - **Message bodies** — with `-m`/`--message`, each commit's message body renders dim line-by-line under its subject, above any `-c` stat body. Long lines word-wrap to the terminal width, continuation rows keeping the gutter and the line's leading indent; piped output stays unwrapped. The window's bodies come from one extra batched `git log` pass (NUL-separated — bodies are multi-line); the `-f` streamed tail fetches one body per row, lazily, like its `-c` stats.
 - **Color** — ANSI, automatically suppressed when stdout isn't a TTY or `NO_COLOR` is set.
 - **Paging** — output taller than the terminal is piped through a pager (`$GIT_PAGER`, then git's `core.pager`, then `$PAGER`, then `less` with `LESS=FRX` like git). Output that fits, or piped/redirected output, prints directly; `GIT_PAGER=cat` disables paging. Colors survive the pager.
-- **Infinite scroll** — with `-f`/`--full`, the public column doesn't stop at the base: older history keeps streaming below it — lazily when paged, so scrolling keeps revealing commits like plain `git log`, down to the root commit. Without `-f` the base row and the trailing `~` truncation row are unconditional. `-f` is the one *don't abbreviate* switch, so the same flag also restores full headers on other authors' public commits and lifts the 10-line cap on a submodule entry's sub-lines — the only way to see every commit a big bump brought in. It deliberately leaves `-b`'s `╷` elision alone: this tail streams lazily and only downward, one row per scroll, while filling the gaps *between* fork points is eager and unbounded — a branch forking 200 commits down the trunk would push every other tree off screen. Keeping distant fork points adjacent is the whole point of the `-b` view.
+- **Infinite scroll** — with `-f`/`--full`, the public column doesn't stop at the base: older history keeps streaming below it — lazily when paged, so scrolling keeps revealing commits like plain `git log`, down to the root commit. Without `-f` the base row and the trailing `~` truncation row are unconditional. `-f` is the one *don't abbreviate* switch, so the same flag also restores full headers on other authors' public commits and lifts the 10-line cap on a submodule entry's sub-lines — the only way to see every commit a big bump brought in. It fills `-b`'s `╷` elision only for small gaps — at most `$GIT_SMARTLOG_GAP_FILL` commits (default 10; `0` never fills): this tail streams lazily and only downward, one row per scroll, while filling the gaps *between* fork points is eager — a branch forking 200 commits down the trunk would push every other tree off screen. Keeping distant fork points adjacent is the whole point of the `-b` view, so wider gaps stay elided.
 
 ## License
 

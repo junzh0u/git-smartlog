@@ -29,9 +29,12 @@ function new_repo {
 }
 
 function expect {
-    # Pass when output $2 contains line $3 (a glob); $1 names the case.
+    # Pass when output $2 has a line matching $3: literal text, where only
+    # `*` is a wildcard ("(empty)" and "|" mean themselves).
     (( ++checks ))
-    if [[ $'\n'$2$'\n' == *$'\n'$~3$'\n'* ]]; then
+    local -a parts=("${(@s:*:)3}")
+    local pat=${(j:*:)"${(@b)parts[@]}"}
+    if [[ $'\n'$2$'\n' == *$'\n'${~pat}$'\n'* ]]; then
         print -r -- "  ok      $1"
     else
         print -r -- "  FAIL    $1"
@@ -60,6 +63,25 @@ expect "smartstat marks a conflicted spaced path U" \
     "$("$REPO/git-smartstat")" ' U a b.txt *'
 expect "smartshow marks a conflicted spaced path U" \
     "$("$REPO/git-smartshow" --list)" 'U a b.txt *'
+
+# SHA-256: a root commit diffs against the empty tree, which used to be
+# sha1's id hardcoded — not an object here, so the change vanished.
+new_repo sha256 --object-format=sha256
+print a >| f
+git add f && git commit -qm root
+git update-ref refs/remotes/origin/main HEAD
+expect "smartlog -c lists a SHA-256 root commit's files" \
+    "$("$REPO/git-smartlog" -c)" '│  A f | 1 +'
+expect "smartshow lists a SHA-256 root commit's files" \
+    "$("$REPO/git-smartshow" --list HEAD)" 'A f  +1'
+expect "an empty SHA-256 root commit reads (empty)" \
+    "$(git commit -q --allow-empty -m e && git checkout -q --orphan o && git rm -qrf . &&
+       git commit -q --allow-empty -m bare && "$REPO/git-smartlog" --base HEAD)" '│  (empty) bare'
+new_repo sha256-unborn --object-format=sha256
+print a >| f
+git add f
+expect "smartstat diffs an unborn SHA-256 HEAD against the empty tree" \
+    "$("$REPO/git-smartstat")" ' A f | 1 +'
 
 print
 if (( failures )); then

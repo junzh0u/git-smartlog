@@ -538,6 +538,9 @@ typeset -g SUBLINE_CAP=10
 # hash.
 typeset -gi HASH_WIDTH=10
 
+# The empty tree's id, in this repo's object format (see empty_tree).
+typeset -g EMPTY_TREE=
+
 # abbrev_hash()'s second output, alongside REPLY.
 typeset -gi REPLY_UNIQ=0
 
@@ -601,6 +604,15 @@ function abbrev_hash {
     else
         REPLY=$uniq
     fi
+}
+
+function empty_tree {
+    # REPLY = the empty tree's id — what a root commit diffs against, and an
+    # unborn HEAD's stand-in. Asked of git, never hardcoded: sha1's 4b825dc…
+    # isn't an object in a SHA-256 repo, where a root commit's change used to
+    # vanish. One fork per process, memoized in EMPTY_TREE.
+    [[ -n $EMPTY_TREE ]] || EMPTY_TREE=$(git hash-object -t tree /dev/null 2>/dev/null)
+    REPLY=$EMPTY_TREE
 }
 
 function draft_node {
@@ -767,7 +779,7 @@ function submodule_sublines {
         # worktree, where git would happily report the parent's changes as the
         # submodule's — require the submodule's own .git (gitfile or dir) first.
         if [[ -e $sub/.git ]]; then
-            dirty=("${(@f)$(cd -q -- $sub &&
+            dirty=("${(@f)$(cd -q -- $sub && EMPTY_TREE= &&
                 uncommitted_stat $color_on $(( reserve + ${#lead} + 3 )) &&
                 (( STAT_HAS_CHANGES )) && print -rl -- "${STAT_BODY[@]}")}")
             dirty=(${dirty:#})
@@ -925,7 +937,7 @@ function uncommitted_stat {
         # per row. Emptiness is decided by the diff itself further down.
         [[ -n $parent ]] ||
             parent=$(git rev-parse --verify --quiet "${commit}^" 2>/dev/null)
-        [[ -n $parent ]] || parent=4b825dc642cb6eb9a060e54bf8d69288fbee4904
+        [[ -n $parent ]] || { empty_tree; parent=$REPLY; }
         diff_args=("$parent" "$commit")
     else
         porcelain=$(git status --porcelain 2>/dev/null)
@@ -933,8 +945,10 @@ function uncommitted_stat {
         # Diff against HEAD, or git's empty-tree object when HEAD is unborn (a repo
         # with no commits) so staged/untracked files still show as additions.
         local diff_target=HEAD
-        git rev-parse --verify --quiet HEAD >/dev/null 2>&1 ||
-            diff_target=4b825dc642cb6eb9a060e54bf8d69288fbee4904
+        if ! git rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
+            empty_tree
+            diff_target=$REPLY
+        fi
         diff_args=("$diff_target")
         STAT_HAS_CHANGES=1
     fi
@@ -2051,7 +2065,7 @@ function main {
     # parent, and whatever a ╷ elision jumped over) are fetched in one batch
     # rather than a rev-parse per row.
     local -A tree_of=() is_empty=()
-    local empty_tree= p1=
+    local p1=
     local -a want_trees=()
     for ((mi = 1; mi <= ${#all_shas}; mi++)); do
         tree_of[${all_shas[mi]}]=${trees[mi]}
@@ -2072,8 +2086,8 @@ function main {
             # A root commit is empty against the empty tree — the same thing -c
             # diffs it against. Asked for lazily and once: it costs a fork, and
             # a root commit is only ever in view at the very bottom of history.
-            [[ -z $empty_tree ]] && empty_tree=$(git hash-object -t tree /dev/null)
-            [[ ${trees[mi]} == $empty_tree ]] && is_empty[${all_shas[mi]}]=1
+            empty_tree
+            [[ ${trees[mi]} == $REPLY ]] && is_empty[${all_shas[mi]}]=1
         elif [[ ${trees[mi]} == ${tree_of[$p1]:-} ]]; then
             is_empty[${all_shas[mi]}]=1
         fi
@@ -2483,7 +2497,10 @@ function stream_public_tail {
         # git log ran out, so the held row is the root commit (or a shallow
         # clone's graft, which has a parent we can't see and so never reads as
         # empty). Its parent tree is the empty tree.
-        (( ${#pend} )) && emit_tail_row "$(git hash-object -t tree /dev/null)" "${pend[@]}"
+        if (( ${#pend} )); then
+            empty_tree
+            emit_tail_row "$REPLY" "${pend[@]}"
+        fi
     }
 }
 
@@ -3152,7 +3169,6 @@ function smartshow_main {
     # HEAD's own change. One revision is that commit against its first parent
     # — git show, not git diff, because this is a viewer for the smartlog's
     # nodes. A range or a pair is git diff's own reading.
-    local empty_tree=4b825dc642cb6eb9a060e54bf8d69288fbee4904
     local spec_mode=diff title= sha= parent=
     local -a spec_args=()
     local c_dim= c_reset= c_head= c_hash=
@@ -3162,7 +3178,10 @@ function smartshow_main {
     if (( ! ${#revs} )) && [[ -n $(git status --porcelain -- $pathspec 2>/dev/null) ]]; then
         spec_mode=wdir
         spec_args=(HEAD)
-        git rev-parse --verify --quiet HEAD >/dev/null 2>&1 || spec_args=($empty_tree)
+        if ! git rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
+            empty_tree
+            spec_args=($REPLY)
+        fi
         title="@  ${c_hash}Uncommitted changes${c_reset}"
     elif (( ${#revs} <= 1 )) && [[ ${revs[1]:-HEAD} != *..* ]]; then
         if (( ! ${#revs} )) && ! git rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
@@ -3171,7 +3190,10 @@ function smartshow_main {
         fi
         sha=$(git rev-parse --verify --quiet "${revs[1]:-HEAD}^{commit}" 2>/dev/null) ||
             die "${revs[1]:-HEAD}: not a commit"
-        parent=$(git rev-parse --verify --quiet "${sha}^" 2>/dev/null) || parent=$empty_tree
+        if ! parent=$(git rev-parse --verify --quiet "${sha}^" 2>/dev/null); then
+            empty_tree
+            parent=$REPLY
+        fi
         spec_args=($parent $sha)
         local hs=
         hs=$(git log -1 --format='%h%x1f%s' $sha 2>/dev/null)

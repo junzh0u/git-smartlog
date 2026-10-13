@@ -538,6 +538,10 @@ typeset -g SUBLINE_CAP=10
 # hash.
 typeset -gi HASH_WIDTH=10
 
+# The controlling terminal's size (see term_size): empty until probed, then
+# its rows and columns, 0 for whichever is unknown.
+typeset -g TERM_ROWS= TERM_COLS=
+
 # The empty tree's id, in this repo's object format (see empty_tree).
 typeset -g EMPTY_TREE=
 
@@ -604,6 +608,24 @@ function abbrev_hash {
     else
         REPLY=$uniq
     fi
+}
+
+function term_size {
+    # Set TERM_ROWS / TERM_COLS to the controlling terminal's size, 0 when
+    # unknown. Asked of /dev/tty, not stdout: run_paged's capture pipe (and
+    # any $(...)) hides the terminal from stdout, while the tty still answers.
+    # $LINES / $COLUMNS are the fallbacks — a $COLUMNS under 20 is ignored as
+    # bogus. One stty fork per process, memoized: run_paged probes before its
+    # pipeline, so the renderer it forks inherits the answer — and -c, which
+    # stats one commit per row, no longer forks per row for it.
+    [[ -n $TERM_ROWS ]] && return 0
+    TERM_ROWS=0 TERM_COLS=0
+    local tsz=
+    tsz=$({ stty size </dev/tty; } 2>/dev/null)   # "rows cols"
+    [[ $tsz == <->" "<-> ]] && TERM_ROWS=${tsz%% *} TERM_COLS=${tsz##* }
+    (( TERM_ROWS > 0 )) || { [[ $LINES == <-> ]] && TERM_ROWS=$LINES; }
+    (( TERM_COLS > 0 )) || { [[ $COLUMNS == <-> ]] && (( COLUMNS >= 20 )) && TERM_COLS=$COLUMNS; }
+    return 0
 }
 
 function empty_tree {
@@ -904,17 +926,11 @@ function uncommitted_stat {
     # a terminal, probe its width and pass it through, so paths show in full when
     # there's room; git still truncates to fit a narrow terminal. Piped output stays
     # at 80, keeping captures stable. The width comes from the controlling terminal
-    # (`stty size </dev/tty`) — not `<&1`, which inside $(...) is the capture pipe,
-    # not the tty — with $COLUMNS as a fallback.
+    # (term_size), not stdout, which inside $(...) is the capture pipe.
     local stat_width=80
     if (( TTY_OUT )); then
-        local termsize=
-        termsize=$({ stty size </dev/tty; } 2>/dev/null)   # "rows cols"
-        if [[ $termsize == <->" "<-> ]]; then
-            stat_width=${termsize##* }
-        elif [[ -n $COLUMNS ]] && (( COLUMNS >= 20 )); then
-            stat_width=$COLUMNS
-        fi
+        term_size
+        (( TERM_COLS )) && stat_width=$TERM_COLS
         # Shrink the width git is told to use so the assembled line fits the real
         # terminal: reserve the caller's per-line prefix (the wdir node indents the
         # body by "  │ ") plus the 2-column change marker ("? ") this function adds
@@ -2121,19 +2137,12 @@ function main {
         done
     fi
 
-    # Terminal width for the word wrap in print_subject / print_commit_msg,
-    # probed once (a stty fork) rather than per row. Same probe as
-    # uncommitted_stat: the run_paged capture pipe hides the terminal, so ask
-    # the controlling tty. 0 = don't wrap (piped, or no terminal to ask).
+    # Terminal width for the word wrap in print_subject / print_commit_msg
+    # (term_size). 0 = don't wrap (piped, or no terminal to ask).
     local -i term_cols=0
     if (( TTY_OUT )); then
-        local tsz=
-        tsz=$({ stty size </dev/tty; } 2>/dev/null)   # "rows cols"
-        if [[ $tsz == <->" "<-> ]]; then
-            term_cols=${tsz##* }
-        elif [[ -n $COLUMNS ]] && (( COLUMNS >= 20 )); then
-            term_cols=$COLUMNS
-        fi
+        term_size
+        term_cols=$TERM_COLS
         (( term_cols > WIDTH_RESERVE )) && term_cols=$(( term_cols - WIDTH_RESERVE ))
     fi
 
@@ -2883,13 +2892,8 @@ function smartshow_layout {
     # under 60 columns stacks below the list instead, full width.
     local -i cols=${FZF_COLUMNS:-0} side=0
     if (( ! cols )); then
-        local tsz=
-        tsz=$({ stty size </dev/tty; } 2>/dev/null)   # "rows cols"
-        if [[ $tsz == <->" "<-> ]]; then
-            cols=${tsz##* }
-        elif [[ -n $COLUMNS ]] && (( COLUMNS >= 20 )); then
-            cols=$COLUMNS
-        fi
+        term_size
+        cols=$TERM_COLS
     fi
     REPLY="right,$(( 100 - SMARTSHOW_SIDEBAR_PCT ))%,border-left,<60(down,60%,border-top)"
     (( cols )) || return 0
@@ -3333,17 +3337,11 @@ function run_paged {
         return
     fi
 
-    # Terminal height from the controlling terminal (same probe as the stat
-    # width in uncommitted_stat), $LINES then 24 as fallbacks. An output of
-    # exactly ROWS lines already scrolls once the prompt prints — page it.
+    # Terminal height (term_size), 24 when unknown. An output of exactly ROWS
+    # lines already scrolls once the prompt prints — page it.
+    term_size
     typeset -g ROWS=24
-    local termsize=
-    termsize=$({ stty size </dev/tty; } 2>/dev/null)   # "rows cols"
-    if [[ $termsize == <->" "<-> ]] && (( ${termsize%% *} > 0 )); then
-        ROWS=${termsize%% *}
-    elif [[ -n $LINES ]] && (( LINES > 0 )); then
-        ROWS=$LINES
-    fi
+    (( TERM_ROWS )) && ROWS=$TERM_ROWS
 
     local pager=${GIT_PAGER:-$(git config core.pager 2>/dev/null)}
     [[ -z $pager ]] && pager=${PAGER:-less}

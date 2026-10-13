@@ -23,6 +23,7 @@ _git-smartlog_base() {
 
 _git-smartlog() {
     _arguments -s -S \
+        '(-i --interactive)'{-i,--interactive}'[browse the graph in fzf; enter opens a commit in git-smartshow]' \
         '(-c --changes)'{-c,--changes}'[per-file changes under every commit in view]' \
         '(-b --branches)'{-b,--branches}'[other local branches as their full stacks, sapling-style]' \
         '(-f --full)'{-f,--full}'[abbreviate nothing: full headers, streaming history, uncapped submodule sub-lines]' \

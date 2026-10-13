@@ -59,6 +59,12 @@
 #     metadata-only by default.
 #   - Optional message bodies: with -m/--message, every commit's message body
 #     renders dim under its subject — see Format below.
+#   - Interactive (opt-in via -i/--interactive; needs fzf): the same view in
+#     fzf, rendered by a child run of this file with every row tagged by its
+#     node (emit / emit_head). j/k step between nodes, enter opens one in
+#     git-smartshow, and that is where diffs live — this view stays a log.
+#     Every view flag combines with it; under -f fzf reads the streamed
+#     history eagerly, so the pager's laziness doesn't carry over.
 #
 # Layout
 #   - Public base: the nearest public ancestor of HEAD. Candidate trunks are
@@ -321,6 +327,22 @@ SELF=${0:A}
 typeset -g TTY_OUT=0
 [[ -t 1 ]] && TTY_OUT=1
 
+# Row tagging, for -i: the renderer's own child run under fzf (see
+# smartlog_interactive) gets GIT_SMARTLOG_ROWKEYS = a file to list its node
+# rows in. Every row then leads with "<key><TAB>" — the full sha of the node
+# it belongs to, or "wdir" for the uncommitted node — which fzf hides and
+# hands to its bindings. stdout is fzf's pipe, but the rows are for a
+# terminal, so color and wrapping behave as on one (TTY_OUT), narrowed by
+# fzf's two-column gutter (WIDTH_RESERVE).
+typeset -gi ROW_TAG=0 ROW_N=0 WIDTH_RESERVE=0
+typeset -g ROW_KEY= ROW_HEADS=
+if [[ -n ${GIT_SMARTLOG_ROWKEYS:-} ]]; then
+    ROW_TAG=1 TTY_OUT=1 WIDTH_RESERVE=2
+    ROW_HEADS=$GIT_SMARTLOG_ROWKEYS
+    unset GIT_SMARTLOG_ROWKEYS
+    : >| $ROW_HEADS
+fi
+
 # Non-ASCII paths: with core.quotePath on (git's default) every path-emitting
 # porcelain command (status --porcelain, ls-files, diff --stat/--raw) C-quotes
 # them into octal escapes ('"\350\275\256..."'). That's not just unreadable — the
@@ -371,7 +393,7 @@ function cd_toplevel {
 }
 
 function smartlog_usage {
-    print -r -- "usage: $PROG [-C <path>] [-c] [-b] [-f] [-m] [-p|-P] [--base REV]
+    print -r -- "usage: $PROG [-C <path>] [-i] [-c] [-b] [-f] [-m] [-p|-P] [--base REV]
 
 Sapling-inspired smartlog using only git: the current branch's draft stack
 drawn on top of its nearest public (pushed) base. A dirty working tree always
@@ -379,6 +401,11 @@ draws an \"Uncommitted changes\" node on top of HEAD, listing its files.
 
 The view flags below are independent and combine freely.
 
+  -i, --interactive   browse the graph in fzf: j/k step between commits, enter
+                      opens the selected one in git-smartshow (the
+                      uncommitted node opens the working copy), ? toggles its
+                      stat, / finds a row (needs fzf; off a terminal it
+                      prints the plain view, so it is safe in an alias)
   -c, --changes       show per-file changes under every commit in the current
                       stack — or under the public commit in view when HEAD
                       sits on the trunk (pair with -f for history); the
@@ -516,6 +543,36 @@ typeset -g REPLY_COL REPLY_HINT
 # remote) and each remote bookmark stripped of its remote — i.e. the -p/--prs
 # lookup keys for the row being rendered.
 typeset -ga REF_BRANCHES
+
+function emit {
+    # Print one rendered row — through this, never a bare print, anywhere in
+    # the render path, so -i's row tagging (see ROW_TAG) reaches every row.
+    # Untagged it is exactly `print -r --`, so the plain output can't drift.
+    if (( ROW_TAG )); then
+        print -r -- "${ROW_KEY}"$'\t'"$1"
+        (( ++ROW_N ))
+    else
+        print -r -- "$1"
+    fi
+}
+
+function emit_head {
+    # Print a node's header row: $1 its key (full sha, or "wdir"), $2 its
+    # glyph, $3 the row. Every row after it, down to the next header —
+    # subject, message, stat body, the connectors below — carries the same
+    # key, so any of them opens this node. Tagged, it also lists the row's
+    # index (and "@" for the working-copy node) in ROW_HEADS, which is what
+    # -i's j/k step between and where it starts the cursor.
+    ROW_KEY=$1
+    if (( ROW_TAG )); then
+        if [[ $2 == @ ]]; then
+            print -r -- "$ROW_N @" >> $ROW_HEADS
+        else
+            print -r -- "$ROW_N" >> $ROW_HEADS
+        fi
+    fi
+    emit "$3"
+}
 
 # Helpers set REPLY instead of printing — avoids a $(...) subshell per call.
 
@@ -825,7 +882,7 @@ function uncommitted_stat {
     local stat_width=80
     if (( TTY_OUT )); then
         local termsize=
-        termsize=$(stty size </dev/tty 2>/dev/null)   # "rows cols"
+        termsize=$({ stty size </dev/tty; } 2>/dev/null)   # "rows cols"
         if [[ $termsize == <->" "<-> ]]; then
             stat_width=${termsize##* }
         elif [[ -n $COLUMNS ]] && (( COLUMNS >= 20 )); then
@@ -836,7 +893,7 @@ function uncommitted_stat {
         # body by "  │ ") plus the 2-column change marker ("? ") this function adds
         # to every git --stat line. Piped output has no terminal to overflow, so it
         # keeps 80.
-        (( stat_width -= reserve + 2 ))
+        (( stat_width -= reserve + 2 + WIDTH_RESERVE ))
         (( stat_width < 20 )) && stat_width=20
     fi
 
@@ -1278,7 +1335,7 @@ function commit_header {
         hash_seg="${hash_color}${hashes[$i][1,hu]}${C_RESET}${C_DIM}${hashes[$i][hu+1,-1]}${C_RESET}"
     fi
 
-    print -r -- "${g}${symbol}  ${hash_seg}${text_color}  ${time_str}${author_seg}${text_reset}${ref_display}${pr_seg}"
+    emit_head ${all_shas[$i]} $symbol "${g}${symbol}  ${hash_seg}${text_color}  ${time_str}${author_seg}${text_reset}${ref_display}${pr_seg}"
 }
 
 function subtree_epoch {
@@ -1309,7 +1366,7 @@ function print_commit_stat {
     [[ -z $lines ]] && return
     local line=
     for line in ${(f)lines}; do
-        print -r -- "$2 ${line}"
+        emit "$2 ${line}"
     done
 }
 
@@ -1382,9 +1439,9 @@ function print_subject {
             body="${tc}${row}${tc:+$C_RESET}"
         fi
         if (( r == 1 )); then
-            print -r -- "${first}  ${body}"
+            emit "${first}  ${body}"
         else
-            print -r -- "${contp}  ${body}"
+            emit "${contp}  ${body}"
         fi
     done
 }
@@ -1410,17 +1467,17 @@ function print_commit_msg {
     local line= w=
     for line in "${(@f)lines}"; do
         if [[ -z $line ]]; then
-            print -r -- "$2"
+            emit "$2"
             continue
         fi
         wrap_line "$line" $avail
         for w in $reply; do
-            print -r -- "$2  ${C_DIM}${w}${C_RESET}"
+            emit "$2  ${C_DIM}${w}${C_RESET}"
         done
     done
     # A -c stat body directly below would run into the message — keep a bare
     # spine row between them.
-    [[ -n ${commit_stats[$1]:-} ]] && print -r -- "$2"
+    [[ -n ${commit_stats[$1]:-} ]] && emit "$2"
 }
 
 function emit_subtree {
@@ -1476,7 +1533,7 @@ function emit_subtree {
         print_subject $spine_kid ${midx[$spine_kid]} "${prefix}│" "${prefix}│"
         print_commit_msg $spine_kid "${prefix}│"
         print_commit_stat $spine_kid "${prefix}│"
-        print -r -- "${prefix}│"
+        emit "${prefix}│"
         for k in $sorted; do
             emit_subtree $k "${prefix}│ "
             # Same in-column rule as the stack's bottom draft: a stat or
@@ -1488,11 +1545,11 @@ function emit_subtree {
                 print_subject $k ${midx[$k]} "${prefix}│ │" "${prefix}│ │"
                 print_commit_msg $k "${prefix}│ │"
                 print_commit_stat $k "${prefix}│ │"
-                print -r -- "${prefix}├─╯"
+                emit "${prefix}├─╯"
             else
                 print_subject $k ${midx[$k]} "${prefix}├─╯" "${prefix}│"
             fi
-            print -r -- "${prefix}│"
+            emit "${prefix}│"
         done
     fi
     # The wdir node draws directly above HEAD, at HEAD's depth — with -b the @
@@ -1500,12 +1557,12 @@ function emit_subtree {
     if (( has_changes )) && [[ $c == $head_sha ]]; then
         local wdir_text_reset=
         [[ -n $C_HEAD_TEXT ]] && wdir_text_reset=$C_RESET
-        print -r -- "${prefix}@  ${C_DRAFT_HASH}Uncommitted changes${C_RESET}${C_HEAD_TEXT}  ${wdir_summary}${wdir_text_reset}"
+        emit_head wdir @ "${prefix}@  ${C_DRAFT_HASH}Uncommitted changes${C_RESET}${C_HEAD_TEXT}  ${wdir_summary}${wdir_text_reset}"
         local stat_line=
         for stat_line in $wdir_stat; do
-            print -r -- "${prefix}│ ${stat_line}"
+            emit "${prefix}│ ${stat_line}"
         done
-        print -r -- "${prefix}│"
+        emit "${prefix}│"
     fi
     draft_node $c
     local symbol=$REPLY text_color=
@@ -1519,9 +1576,10 @@ function emit_subtree {
 function main {
     # Option parsing (zparseopts is a zsh builtin). Operates on main's own
     # positional params ("$@").
-    local -a ARG_FULL=() ARG_BASE=() ARG_CHANGES=() ARG_BRANCHES=() ARG_MESSAGE=() ARG_PRS=() ARG_NO_PRS=() ARG_CD=() ARG_HELP=()
+    local -a ARG_FULL=() ARG_BASE=() ARG_CHANGES=() ARG_BRANCHES=() ARG_MESSAGE=() ARG_PRS=() ARG_NO_PRS=() ARG_CD=() ARG_HELP=() ARG_INTERACTIVE=()
     zparseopts -D -E -- \
         C+:=ARG_CD \
+        {i,-interactive}=ARG_INTERACTIVE \
         {f,-full}=ARG_FULL \
         -base:=ARG_BASE \
         {c,-changes}=ARG_CHANGES \
@@ -1587,6 +1645,15 @@ function main {
         elif [[ -f $pr_marker ]]; then
             show_prs=1
         fi
+    fi
+
+    # -i hands the view to fzf, rendered by a child run of this file; this run
+    # renders nothing itself. Branching here, after -p/-P have updated the
+    # sticky marker, lets the child just read it. Off a terminal -i is a
+    # no-op, so `sl = smartlog -i` stays safe in pipes and scripts.
+    if (( ${#ARG_INTERACTIVE} && TTY_OUT && ! ROW_TAG )); then
+        smartlog_interactive
+        return
     fi
 
     NOW=$EPOCHSECONDS
@@ -2007,12 +2074,13 @@ function main {
     local -i term_cols=0
     if (( TTY_OUT )); then
         local tsz=
-        tsz=$(stty size </dev/tty 2>/dev/null)   # "rows cols"
+        tsz=$({ stty size </dev/tty; } 2>/dev/null)   # "rows cols"
         if [[ $tsz == <->" "<-> ]]; then
             term_cols=${tsz##* }
         elif [[ -n $COLUMNS ]] && (( COLUMNS >= 20 )); then
             term_cols=$COLUMNS
         fi
+        (( term_cols > WIDTH_RESERVE )) && term_cols=$(( term_cols - WIDTH_RESERVE ))
     fi
 
     local n_drafts=${#drafts}
@@ -2083,8 +2151,114 @@ function main {
        git rev-parse --verify --quiet "${publics[-1]}^" >/dev/null 2>&1; then
         stream_public_tail ${publics[-1]}
     else
-        print -r -- "~"
+        emit "~"
     fi
+}
+
+function smartlog_interactive {
+    # -i: browse the rendered graph in fzf. A child run of this file renders
+    # the same view with every row tagged by its node's key (see emit); fzf
+    # shows the rows untouched, hides the key, and hands it to the bindings.
+    # Enter opens the node in git-smartshow — the commit's change, or for the
+    # uncommitted node the working copy — and quitting that returns here. j/k
+    # step between node header rows (listed by the child in heads), the
+    # arrows move row by row, and the cursor starts on @. Reads main's ARG_*
+    # by dynamic scoping; the child gets the view flags back, but not -C,
+    # which this run has already applied (it runs from the same top level).
+    (( $+commands[fzf] )) || die "-i needs fzf (https://github.com/junegunn/fzf)"
+    local -a child=()
+    (( ${#ARG_CHANGES} )) && child+=(-c)
+    (( ${#ARG_BRANCHES} )) && child+=(-b)
+    (( ${#ARG_FULL} )) && child+=(-f)
+    (( ${#ARG_MESSAGE} )) && child+=(-m)
+    (( ${#ARG_PRS} )) && child+=(-p)
+    (( ${#ARG_NO_PRS} )) && child+=(-P)
+    (( ${#ARG_BASE} )) && child+=(--base "${ARG_BASE[-1]#=}")
+
+    local sdir=
+    sdir=$(mktemp -d "${TMPDIR:-/tmp}/git-smartlog.XXXXXX") || die "cannot create state directory"
+    trap "rm -rf -- ${(q)sdir}; exit 129" HUP
+    trap "rm -rf -- ${(q)sdir}; exit 143" TERM
+    {
+        local heads=$sdir/heads qheads=${(qq)sdir}/heads
+        local src="GIT_SMARTLOG_ROWKEYS=$qheads ${(qq)SELF}${child:+ ${(j: :)${(@qq)child}}}"
+        local key="GIT_SMARTLOG_MODE=key ${(qq)SELF}"
+        local dim= reset=
+        [[ -z $NO_COLOR ]] && dim=$'\e[2m' reset=$'\e[0m'
+        # heads holds one zero-based row index per node header ("N @" for
+        # the working copy); {n} is the cursor's, and pos() is one-based.
+        local -a binds=(
+            "j:transform:awk -v n={n} '\$1>n{print \"pos(\" \$1+1 \")\"; exit}' $qheads"
+            "k:transform:awk -v n={n} '\$1<n{p=\$1} END{if(p!=\"\")print \"pos(\" p+1 \")\"}' $qheads"
+            "load:transform:awk '\$2==\"@\"{print \"pos(\" \$1+1 \")\"}' $qheads"
+            "enter:transform:$key enter {1}"
+            "esc:transform:$key esc {1}"
+            "/:show-input+unbind($SMARTLOG_LETTERS)"
+            "?:toggle-preview"
+            "ctrl-r:reload:$src"
+            'q:abort'
+        )
+        local -a fzf_args=(
+            --ansi --no-sort --layout=reverse --no-input --no-multi
+            --delimiter=$'\t' --with-nth=2.. --with-shell='sh -c'
+            --footer="${dim}j/k node  ↑/↓ row  ⏎ open  ? stat  / find  q quit${reset}"
+            --preview="GIT_SMARTLOG_MODE=preview ${(qq)SELF} {1}"
+            --preview-window='hidden,right,50%,border-left,<40(hidden,down,50%,border-top)'
+            --prompt='find: '
+        )
+        local bd=
+        for bd in $binds; do fzf_args+=(--bind="$bd"); done
+        GIT_SMARTLOG_ROWKEYS=$heads "$SELF" $child | fzf "${fzf_args[@]}" >/dev/null
+        return 0
+    } always {
+        rm -rf -- "$sdir"
+    }
+}
+
+function smartlog_internal {
+    # The modes -i's fzf calls back into, picked by GIT_SMARTLOG_MODE, each
+    # given the row's key (a full sha, or "wdir"):
+    #   key      the fzf actions for enter/esc ($1, key $2): leave `/`
+    #            search if it's on, else open the row (enter) or quit (esc)
+    #   show     open the node in git-smartshow: the commit, or bare for the
+    #            uncommitted node, which smartshow's default @ already is
+    #   preview  the `?` pane: the commit's header and stat, or the
+    #            uncommitted stat block
+    local mode=$GIT_SMARTLOG_MODE
+    unset GIT_SMARTLOG_MODE
+    case $mode in
+        key)
+            local action=$1 k=${2:-}
+            if [[ ${FZF_INPUT_STATE:-hidden} != hidden ]]; then
+                print -r -- "track-current+clear-query+search()+hide-input+rebind($SMARTLOG_LETTERS)"
+            elif [[ $action == esc ]]; then
+                print -r -- abort
+            elif [[ -n $k ]]; then
+                print -r -- "execute:GIT_SMARTLOG_MODE=show ${(qq)SELF} ${(qq)k}"
+            fi
+            ;;
+        show)
+            PROG=git-smartshow
+            if [[ ${1:-} == wdir ]]; then
+                smartshow_main
+            else
+                smartshow_main "$1"
+            fi
+            ;;
+        preview)
+            if [[ ${1:-} == wdir ]]; then
+                uncommitted_stat 1 0
+                (( STAT_HAS_CHANGES )) || return 0
+                print -r -- "$STAT_SUMMARY"
+                print -rl -- "${STAT_BODY[@]}"
+            elif [[ -n ${1:-} ]]; then
+                git show --stat=${FZF_PREVIEW_COLUMNS:-80} --color=always "$1"
+            fi
+            ;;
+        *)
+            die "unknown internal mode: $mode"
+            ;;
+    esac
 }
 
 function render_plan {
@@ -2109,19 +2283,19 @@ function render_plan {
             if (( has_changes )); then
                 local wdir_text_reset=
                 [[ -n $C_HEAD_TEXT ]] && wdir_text_reset=$C_RESET
-                print -r -- "${g}@  ${C_DRAFT_HASH}Uncommitted changes${C_RESET}${C_HEAD_TEXT}  ${wdir_summary}${wdir_text_reset}"
+                emit_head wdir @ "${g}@  ${C_DRAFT_HASH}Uncommitted changes${C_RESET}${C_HEAD_TEXT}  ${wdir_summary}${wdir_text_reset}"
                 # stat_line already starts with one space (git's --stat lead); add
                 # one more so the marker sits 2 cols past the │ spine, aligning
                 # with commit text (│  subject) and the node header (@  Uncomm…).
                 local stat_line=
                 for stat_line in $wdir_stat; do
-                    print -r -- "${g}│ ${stat_line}"
+                    emit "${g}│ ${stat_line}"
                 done
                 if (( n_drafts > 0 )); then
-                    print -r -- "${g}│"
+                    emit "${g}│"
                 else
-                    print -r -- "$join"
-                    print -r -- "│"
+                    emit "$join"
+                    emit "│"
                     spine='│'
                 fi
             fi
@@ -2148,17 +2322,17 @@ function render_plan {
                         print_subject ${drafts[di]} $idx "${g}│" "${g}│"
                         print_commit_msg ${drafts[di]} "${g}│"
                         print_commit_stat ${drafts[di]} "${g}│"
-                        print -r -- "$join"
+                        emit "$join"
                     else
                         print_subject ${drafts[di]} $idx "$join" "│"
                     fi
-                    print -r -- "│"
+                    emit "│"
                     spine='│'
                 else
                     print_subject ${drafts[di]} $idx "${g}│" "${g}│"
                     print_commit_msg ${drafts[di]} "${g}│"
                     print_commit_stat ${drafts[di]} "${g}│"
-                    print -r -- "${g}│"
+                    emit "${g}│"
                 fi
             done
             ;;
@@ -2173,11 +2347,11 @@ function render_plan {
                 print_subject $bh ${midx[$bh]} "${g}│" "${g}│"
                 print_commit_msg $bh "${g}│"
                 print_commit_stat $bh "${g}│"
-                print -r -- "$join"
+                emit "$join"
             else
                 print_subject $bh ${midx[$bh]} "$join" "│"
             fi
-            print -r -- "│"
+            emit "│"
             spine='│'
             ;;
         (public:*)
@@ -2205,7 +2379,7 @@ function render_plan {
                 # The final row below this ("~" or the -f tail's spine)
                 # belongs to main — see the render_plan call there.
                 if (( is_compact )); then
-                    print -r -- "│"
+                    emit "│"
                 else
                     print_subject $pp $idx "│" "│"
                     print_commit_msg $pp "│"
@@ -2217,13 +2391,13 @@ function render_plan {
                 seg='╷'
                 [[ " ${parents[idx]} " == *" ${publics[pub_i+1]} "* ]] && seg='│'
                 if (( is_compact )); then
-                    print -r -- "$seg"
+                    emit "$seg"
                 else
                     print_subject $pp $idx "$seg" "$seg"
                     print_commit_msg $pp "$seg"
                 fi
                 print_commit_stat $pp "$seg"
-                print -r -- "$seg"
+                emit "$seg"
                 spine=$seg
             fi
             ;;
@@ -2253,7 +2427,7 @@ function stream_public_tail {
     # pipeline stage: zsh runs that in a subshell, so a flush after `done`
     # would be looking at a copy of `pend` that never got written.
     local from=$1
-    print -r -- "│"
+    emit "│"
     local fsha= h= t= e= a= ae= r= p= s=
     local -a pend=()
     git log --first-parent --abbrev=4 --decorate=full \
@@ -2307,16 +2481,16 @@ function emit_tail_row {
     fi
     commit_header $idx ◆ '' "$C_PUBLIC_HASH" '' $is_compact
     if (( is_compact )); then
-        print -r -- "│"
+        emit "│"
     else
         print_subject $fsha $idx "│" "│"
         print_commit_msg $fsha "│"
     fi
     print_commit_stat $fsha "│"
     if [[ -n $p ]]; then
-        print -r -- "│"
+        emit "│"
     else
-        print -r -- "~"   # root commit: history exhausted
+        emit "~"   # root commit: history exhausted
     fi
 }
 
@@ -2389,6 +2563,10 @@ Sidebar names carry git-smartstat's change markers and colors.
 
 Piped, it prints the diff once and exits, like git diff."
 }
+
+# The letter keys -i binds; its `/` search unbinds them so they type into the
+# query, and leaving search rebinds them.
+SMARTLOG_LETTERS='j,k,q,/,?'
 
 # The keys git-smartshow binds to letters and arrows; `/` search unbinds them
 # so they type into the query, and leaving search rebinds them.
@@ -3033,7 +3211,11 @@ function stream_or_print {
             return
         fi
     done
-    (( ${#buf} )) && print -rl -- "${buf[@]}"
+    # An if, not &&: empty output (-i renders through fzf instead) must not
+    # leave this stage — and so the pipefail pipeline — exiting 1.
+    if (( ${#buf} )); then
+        print -rl -- "${buf[@]}"
+    fi
 }
 
 function run_paged {
@@ -3045,7 +3227,8 @@ function run_paged {
     # piped/redirected output runs the command untouched, as does
     # GIT_PAGER=cat. The pipe hides the terminal from the renderer, so color
     # and stat-width decisions inside consult TTY_OUT, probed up front.
-    if (( ! TTY_OUT )); then
+    # A tagged run (-i's child) is fzf's input, not the terminal's: never page.
+    if (( ! TTY_OUT || ROW_TAG )); then
         "$@"
         return
     fi
@@ -3055,7 +3238,7 @@ function run_paged {
     # exactly ROWS lines already scrolls once the prompt prints — page it.
     typeset -g ROWS=24
     local termsize=
-    termsize=$(stty size </dev/tty 2>/dev/null)   # "rows cols"
+    termsize=$({ stty size </dev/tty; } 2>/dev/null)   # "rows cols"
     if [[ $termsize == <->" "<-> ]] && (( ${termsize%% *} > 0 )); then
         ROWS=${termsize%% *}
     elif [[ -n $LINES ]] && (( LINES > 0 )); then
@@ -3087,6 +3270,10 @@ function run_paged {
 # feeds scripts, so it never pages, and smartshow brings its own fzf UI).
 # Ahead of the name, GIT_SMARTSHOW_MODE marks one of smartshow's fzf callbacks,
 # which run this file by its resolved path whatever it was invoked as.
+if [[ -n ${GIT_SMARTLOG_MODE:-} ]]; then
+    smartlog_internal "$@"
+    exit
+fi
 if [[ -n ${GIT_SMARTSHOW_MODE:-} ]]; then
     smartshow_internal "$@"
     exit

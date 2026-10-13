@@ -26,9 +26,15 @@ jobs:
           zsh -n dev/make-screenshots.zsh
           zsh -n dev/make-fixtures.zsh
           zsh -n test/test-readme-examples.zsh
+          zsh -n test/test-row-keys.zsh
           python3 -m py_compile test/readme_examples.py
 
       # Every example in the README, replayed against a freshly built fixture
       # repo. The README is the golden file — see test/test-readme-examples.zsh.
       - name: README examples
         run: ./test/test-readme-examples.zsh
+
+      # -i's fzf input: the plain render plus a key column naming each row's
+      # node. The interactive half is fzf's; the tagging is what can drift.
+      - name: Row keys
+        run: ./test/test-row-keys.zsh

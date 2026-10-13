@@ -411,7 +411,7 @@ In a real terminal the output is colorized — draft hashes in bold yellow, `HEA
 - `zsh`
 - `git`
 
-That's it. The script sources nothing else, so you can drop it anywhere on your `PATH` and run it — the uncommitted node included, since its stat block is computed in-file (see [git-smartstat](#git-smartstat)). The opt-in extras: `-p`/`--prs` needs the [GitHub CLI (`gh`)](https://cli.github.com/), and `git-smartshow` needs [`fzf`](https://github.com/junegunn/fzf) (plus [difftastic](https://difftastic.wilfred.me.uk/) if you want structural diffs in it). Everything else works without them.
+That's it. The script sources nothing else, so you can drop it anywhere on your `PATH` and run it — the uncommitted node included, since its stat block is computed in-file (see [git-smartstat](#git-smartstat)). The opt-in extras: `-p`/`--prs` needs the [GitHub CLI (`gh`)](https://cli.github.com/), and both `git-smartshow` and `-i` need [`fzf`](https://github.com/junegunn/fzf) (plus [difftastic](https://difftastic.wilfred.me.uk/) if you want structural diffs). Everything else works without them.
 
 ## Install
 
@@ -444,7 +444,7 @@ zstyle ':completion:*:*:git:*' user-commands \
 All three commands take `-C <path>`, exactly as git does — run as if started in that directory, repeats composing — so you can point them at a repo without leaving the one you're in.
 
 ```
-usage: git-smartlog [-C <path>] [-c] [-b] [-f] [-m] [-p|-P] [--base REV]
+usage: git-smartlog [-C <path>] [-i] [-c] [-b] [-f] [-m] [-p|-P] [--base REV]
 
 Sapling-inspired smartlog using only git: the current branch's draft stack
 drawn on top of its nearest public (pushed) base. A dirty working tree always
@@ -452,6 +452,10 @@ draws an "Uncommitted changes" node on top of HEAD, listing its files.
 
 The view flags below are independent and combine freely.
 
+  -i, --interactive   browse the graph in fzf: j/k step between commits, enter
+                      opens the selected one in git-smartshow (the
+                      uncommitted node opens the working copy), ? toggles its
+                      stat, / finds a row (needs fzf)
   -c, --changes       show per-file changes under every commit in the current
                       stack — or under the public commit in view when HEAD
                       sits on the trunk (pair with -f for history); the
@@ -488,6 +492,12 @@ The view flags below are independent and combine freely.
 Output taller than the terminal is paged ($GIT_PAGER / core.pager / $PAGER /
 less; GIT_PAGER=cat disables paging).
 ```
+
+### Interactive
+
+`git smartlog -i` puts the same graph in [`fzf`](https://github.com/junegunn/fzf), with the cursor on `@`. `j`/`k` step from commit to commit, and the arrow keys move row by row. `enter` opens the selected commit in [`git-smartshow`](#git-smartshow) — its files as a tree, its diff beside them — and quitting that brings you back to the same row. On the uncommitted node, `enter` opens the working copy instead. `?` toggles a side pane with the commit's header and stat, `/` finds a row by its text (`enter` or `esc` goes back to the graph on the match), `ctrl-r` re-renders after you commit in another pane, and `q` quits.
+
+Every view flag combines with it — `git smartlog -i -b -c` is the full branch forest with per-file bodies, browsable. The graph is the regular renderer's own output: each row carries a hidden key naming the commit it belongs to, so a wrapped subject, a `-c` file line or a connector below a commit all open that commit. Under `-f` fzf reads the streamed history to the end rather than lazily as you scroll. When stdout isn't a terminal, `-i` does nothing and the plain view prints, so it's safe to bake into an alias (`git config --global alias.sl 'smartlog -i'`) and still pipe `git sl`.
 
 ## git-smartstat
 

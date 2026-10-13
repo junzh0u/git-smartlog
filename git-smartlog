@@ -739,7 +739,7 @@ function submodule_sublines {
     # reply = the sub-lines that detail a submodule entry, drawn under its S
     # line: first the submodule's own UNCOMMITTED changes, then the commits its
     # pointer gained or lost. Each group renders at most SUBLINE_CAP lines,
-    # then a dim "… +N more" tail; the cap is lifted (0) under -N.
+    # then a dim "… +N more" tail; the cap is lifted (0) under -f.
     #
     # Uncommitted group (working-tree mode only — a committed diff has no
     # working tree). The parent's gitlink diff can't reach inside a submodule:
@@ -1118,7 +1118,7 @@ function uncommitted_stat {
                     disp="...$disp"
                 fi
                 n=0
-                for f in $all_untracked; do [[ ${f[1,${#d}]} == "$d" ]] && (( n++ )); done
+                for f in $all_untracked; do [[ ${f[1,${#d}]} == "$d" ]] && (( ++n )); done
                 dir_disp+=("$disp"); dir_n+=("$n"); dir_path+=("$d")
                 (( ${#n} > max_dir_w )) && max_dir_w=${#n}
             done
@@ -1926,7 +1926,7 @@ function main {
 
     local -a publics
     if (( show_branches )); then
-        # Shown publics: the -n window from the trunk tip, plus the merge-base
+        # Shown publics: the trunk tip, plus the merge-base
         # and every branch's fork point (which can sit far below the window),
         # ordered along the trunk by one topo-order walk down to their common
         # ancestor. Neighbors that aren't parent/child render with the dotted ╷
@@ -2007,7 +2007,7 @@ function main {
     # -c: per-commit stat bodies, drawn under the owning commit's subject row by
     # print_commit_stat. It covers every draft in the current stack, clean or
     # dirty — or, when HEAD sits directly on the trunk (no drafts), every public
-    # commit in view (pair with -n) — with the wdir node still on top when the
+    # commit in view (pair with -f) — with the wdir node still on top when the
     # tree is dirty. Each body ends with a dim "N files, +X -Y" total line (the
     # wdir node carries that total in its header instead).
     local -A commit_stats=()
@@ -2410,7 +2410,7 @@ function render_plan {
             ;;
         (public:*)
             pp=${el#public:}
-            (( pub_i++ ))
+            (( ++pub_i ))
             idx=${midx[$pp]}
             symbol=◆
             text_color=

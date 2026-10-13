@@ -1687,7 +1687,8 @@ function main {
     fi
 
     local base_arg=
-    (( ${#ARG_BASE} > 0 )) && base_arg=${ARG_BASE[-1]}
+    # zparseopts keeps the "=" of the --base=REV form; strip it, as -i does.
+    (( ${#ARG_BASE} > 0 )) && base_arg=${ARG_BASE[-1]#=}
 
     local base_ref
     if [[ -n $base_arg ]]; then

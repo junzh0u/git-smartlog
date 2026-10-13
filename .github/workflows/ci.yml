@@ -27,6 +27,7 @@ jobs:
           zsh -n dev/make-fixtures.zsh
           zsh -n test/test-readme-examples.zsh
           zsh -n test/test-row-keys.zsh
+          zsh -n test/test-regressions.zsh
           python3 -m py_compile test/readme_examples.py
 
       # Every example in the README, replayed against a freshly built fixture
@@ -38,3 +39,8 @@ jobs:
       # node. The interactive half is fzf's; the tagging is what can drift.
       - name: Row keys
         run: ./test/test-row-keys.zsh
+
+      # Corners no README example should carry (option forms, conflicted
+      # paths, SHA-256 repos), each in its own throwaway repo.
+      - name: Regressions
+        run: ./test/test-regressions.zsh

@@ -8,7 +8,8 @@
 - `dev/make-fixtures.zsh` — builds the repo states the README examples are captured from: `demo` (make-demo.zsh's dirty tree) and `demo-clean` (the same commits, pristine). Deliberately only two.
 - `test/test-readme-examples.zsh` — replays every example in the README and diffs it against what the script prints now; `--update` re-captures them all. The README is the golden file, so there is no second copy to drift. Hashes and relative timestamps are normalized away; everything else is exact. The shell half owns fixtures and env hygiene; the comparing lives in `test/readme_examples.py` beside it.
 - `test/test-row-keys.zsh` — checks the row tagging `-i` feeds fzf (`GIT_SMARTLOG_ROWKEYS`): the tagged rows are the plain render plus a key column, and the keys and node-header list name the right commits, across the view flags. Every render-path row goes through `emit`/`emit_head`; a bare `print` there escapes the tagging, and this test is what notices.
-- `.github/workflows/ci.yml` — parses every script, then runs both tests.
+- `test/test-regressions.zsh` — one throwaway repo per bug the README examples can't show (an option form, a conflicted path with a space, a SHA-256 repo...). A fixed bug that no example exercises gets a case here.
+- `.github/workflows/ci.yml` — parses every script, then runs all three tests.
 - `dev/make-screenshots.zsh` — rebuilds the demo repo and regenerates every PNG in `screenshots/` (pty capture → ANSI-to-HTML → headless Chrome). Needs Chrome; macOS-oriented.
 - `screenshots/` — the PNGs the README embeds. Never edit by hand; always regenerate.
 - `plans/` — one file per idea worth doing but not done, each naming the functions it touches and the decision still open. Delete a plan when it ships; a decision that got made belongs in the script's comments, not here.

@@ -83,6 +83,20 @@ git add f
 expect "smartstat diffs an unborn SHA-256 HEAD against the empty tree" \
     "$("$REPO/git-smartstat")" ' A f | 1 +'
 
+# -b hides a local branch's name when <remote>/<name> sits at the same
+# commit — exactly that name: origin/feat/y is not y's, so y must still show.
+new_repo remote-name
+git commit -q --allow-empty -m base
+git update-ref refs/remotes/origin/main HEAD
+git checkout -qb x && git commit -q --allow-empty -m on-x
+git branch y
+git update-ref refs/remotes/origin/feat/y HEAD
+expect "origin/feat/y doesn't hide -b's local branch y" \
+    "$("$REPO/git-smartlog" -b)" '*@  *  origin/feat/y x* y'
+git update-ref refs/remotes/origin/y HEAD
+expect "origin/y at y's commit still hides it" \
+    "$("$REPO/git-smartlog" -b)" '*@  *  origin/feat/y origin/y x*'
+
 print
 if (( failures )); then
     print -r -- "$failures of $checks regression checks failed"

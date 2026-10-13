@@ -1826,25 +1826,24 @@ function main {
     local -A in_draft first_parent tree_kids roots_at
     local -a bfull_heads=() bfull_forks=()
     if (( show_branches )); then
-        # for-each-ref's format language has no %x1f escape (that's pretty-format
-        # only); a space separator is safe — ref names cannot contain spaces.
-        local -A remote_tip
-        local rn= rs=
-        while read -r rn rs; do
-            [[ -n $rn ]] && remote_tip[$rn]=$rs
-        done < <(git for-each-ref --format='%(refname:short) %(objectname)' refs/remotes 2>/dev/null)
+        # Every remote branch as "<name> <sha>", the remote stripped
+        # (lstrip=3 drops refs/remotes/<remote>/), so a local branch's
+        # same-name check is one exact lookup — origin/feat/x is not x's.
+        # for-each-ref's format language has no %x1f escape (that's
+        # pretty-format only); a space separator is safe — ref names cannot
+        # contain spaces.
+        local -A remote_at
+        local rn=
+        for rn in ${(f)"$(git for-each-ref --format='%(refname:lstrip=3) %(objectname)' refs/remotes 2>/dev/null)"}; do
+            remote_at[$rn]=1
+        done
 
-        local bname= bhead= fork= rk= name_hidden=
+        local bname= bhead= fork= name_hidden=
         while read -r bname bhead; do
             [[ -z $bname || $bname == "$cur_branch" ]] && continue
             fork=$(git merge-base "$bhead" "$base_ref" 2>/dev/null) || continue
             name_hidden=0
-            for rk in ${(k)remote_tip}; do
-                if [[ $rk == */"$bname" && ${remote_tip[$rk]} == $bhead ]]; then
-                    name_hidden=1
-                    break
-                fi
-            done
+            [[ -n ${remote_at[$bname $bhead]:-} ]] && name_hidden=1
             if [[ $bhead == $fork ]]; then
                 # merged into the trunk: label its public commit instead
                 (( name_hidden )) || attach_names[$bhead]+="$bname "

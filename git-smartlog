@@ -1410,6 +1410,21 @@ function subtree_epoch {
     REPLY=$best
 }
 
+function order_newest_first {
+    # reply = the -b subtree roots $@, newest subtree first (subtree_epoch),
+    # ties broken by sha, descending — a stable order for equal epochs. Keys
+    # are a zero-padded epoch and the sha, so one reverse sort in C order
+    # does it.
+    local LC_ALL=C
+    local -a keyed=()
+    local c=
+    for c in "$@"; do
+        subtree_epoch $c
+        keyed+=("${(l:12::0:)REPLY} $c")
+    done
+    reply=(${${(O)keyed}#* })
+}
+
 function print_commit_stat {
     # Print the -c per-file stat body registered for commit $1 (if any)
     # directly under its subject row. $2 = the spine prefix carrying that
@@ -1550,38 +1565,19 @@ function emit_subtree {
     local c=$1 prefix=$2
     local -a kids=(${=tree_kids[$c]:-})
     if (( ${#kids} )); then
-        local spine_kid= k= kep= kbest=
+        local spine_kid= k=
         for k in $kids; do
             [[ -n ${on_head_path[$k]} ]] && spine_kid=$k
         done
-        if [[ -z $spine_kid ]]; then
-            kbest=-1
-            for k in $kids; do
-                subtree_epoch $k
-                kep=$REPLY
-                if (( kep > kbest )) || { (( kep == kbest )) && [[ $k > $spine_kid ]]; }; then
-                    spine_kid=$k
-                    kbest=$kep
-                fi
-            done
+        local -a sorted=()
+        if [[ -n $spine_kid ]]; then
+            order_newest_first ${kids:#$spine_kid}
+            sorted=($reply)
+        else
+            order_newest_first $kids
+            spine_kid=${reply[1]}
+            sorted=(${reply[2,-1]})
         fi
-        local -a sides=(${kids:#$spine_kid}) sorted=()
-        local pick= pbest=
-        while (( ${#sides} )); do
-            pick=${sides[1]}
-            subtree_epoch $pick
-            pbest=$REPLY
-            for k in ${sides[2,-1]}; do
-                subtree_epoch $k
-                kep=$REPLY
-                if (( kep > pbest )) || { (( kep == pbest )) && [[ $k > $pick ]]; }; then
-                    pick=$k
-                    pbest=$kep
-                fi
-            done
-            sorted+=("$pick")
-            sides=(${sides:#$pick})
-        done
         emit_subtree $spine_kid "$prefix"
         print_subject $spine_kid ${midx[$spine_kid]} "${prefix}│" "${prefix}│"
         print_commit_msg $spine_kid "${prefix}│"
@@ -2187,24 +2183,12 @@ function main {
             # Trees hanging off this public: HEAD's tree first (topmost, like
             # the single-stack layout), the rest newest-subtree first.
             local -a proots=(${=roots_at[$pp]:-}) tordered=()
-            local tpick= tbest= tep=
-            if (( ${proots[(Ie)$head_root]} )); then
+            if [[ -n $head_root ]] && (( ${proots[(Ie)$head_root]} )); then
                 tordered+=("$head_root")
                 proots=(${proots:#$head_root})
             fi
-            while (( ${#proots} )); do
-                tpick=${proots[1]}
-                subtree_epoch $tpick; tbest=$REPLY
-                for bh in ${proots[2,-1]}; do
-                    subtree_epoch $bh; tep=$REPLY
-                    if (( tep > tbest )) || { (( tep == tbest )) && [[ $bh > $tpick ]]; }; then
-                        tpick=$bh
-                        tbest=$tep
-                    fi
-                done
-                tordered+=("$tpick")
-                proots=(${proots:#$tpick})
-            done
+            order_newest_first $proots
+            tordered+=($reply)
             for bh in $tordered; do
                 plan+=("tree:$bh")
             done

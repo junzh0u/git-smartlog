@@ -1548,6 +1548,52 @@ function print_commit_msg {
     [[ -n ${commit_stats[$1]:-} ]] && emit "$2"
 }
 
+function print_commit_rows {
+    # Print commit $1's rows under its header, all in the column prefix $3
+    # carries down: the subject, the -m body and the -c stat. $2 = its index
+    # into the metadata arrays. $4 = 1 for a compact public row, which shows
+    # no subject or message — a bare spine row stands in — but keeps a stat.
+    if (( ${4:-0} )); then
+        emit "$3"
+    else
+        print_subject $1 $2 "$3" "$3"
+        print_commit_msg $1 "$3"
+    fi
+    print_commit_stat $1 "$3"
+}
+
+function close_commit_rows {
+    # Print the rows of commit $1 (index $2), which closes its column into
+    # the one below with bend $4: $3 is that column's own prefix, $5 the
+    # spine carrying on under the bend. A -c stat or -m body must stay in
+    # ITS commit's column — printed after the bend it would sit beside the
+    # commit below and read as that one's — so then the subject stays
+    # in-column too and a bare bend closes. Otherwise the subject rides the
+    # bend row.
+    if [[ -n ${commit_stats[$1]:-}${commit_msgs[$1]:-} ]]; then
+        print_commit_rows $1 $2 "$3"
+        emit "$4"
+    else
+        print_subject $1 $2 "$4" "$5"
+    fi
+}
+
+function emit_wdir_node {
+    # Print the uncommitted node at column prefix $1: its @ header — the
+    # draft-colored label, the change summary in HEAD-text color — and its
+    # file list. Each stat line already starts with one space (git's --stat
+    # lead); one more puts the marker 2 cols past the │ spine, aligned with
+    # commit text (│  subject) and the header (@  Uncomm…). The caller draws
+    # what connects it below.
+    local reset=
+    [[ -n $C_HEAD_TEXT ]] && reset=$C_RESET
+    emit_head wdir @ "${1}@  ${C_DRAFT_HASH}Uncommitted changes${C_RESET}${C_HEAD_TEXT}  ${wdir_summary}${reset}"
+    local line=
+    for line in $wdir_stat; do
+        emit "${1}│ ${line}"
+    done
+}
+
 function emit_subtree {
     # -b renderer: print the draft subtree rooted at $1 top-down, ending with
     # $1's header row. The caller owns $1's subject row — a "│  subject"
@@ -1579,38 +1625,21 @@ function emit_subtree {
             sorted=(${reply[2,-1]})
         fi
         emit_subtree $spine_kid "$prefix"
-        print_subject $spine_kid ${midx[$spine_kid]} "${prefix}│" "${prefix}│"
-        print_commit_msg $spine_kid "${prefix}│"
-        print_commit_stat $spine_kid "${prefix}│"
+        print_commit_rows $spine_kid ${midx[$spine_kid]} "${prefix}│"
         emit "${prefix}│"
         for k in $sorted; do
             emit_subtree $k "${prefix}│ "
-            # Same in-column rule as the stack's bottom draft: a stat or
-            # message body (and then its subject too) stays in the side
-            # column, closed by a bare ├─╯ bend. (-c can't reach this — it
-            # scopes to the current branch, and side subtrees are never on
-            # HEAD's path — but -m bodies land on any draft.)
-            if [[ -n ${commit_stats[$k]:-}${commit_msgs[$k]:-} ]]; then
-                print_subject $k ${midx[$k]} "${prefix}│ │" "${prefix}│ │"
-                print_commit_msg $k "${prefix}│ │"
-                print_commit_stat $k "${prefix}│ │"
-                emit "${prefix}├─╯"
-            else
-                print_subject $k ${midx[$k]} "${prefix}├─╯" "${prefix}│"
-            fi
+            # (-c can't reach a side subtree — it scopes to the current
+            # branch, and side subtrees are never on HEAD's path — but -m
+            # bodies land on any draft.)
+            close_commit_rows $k ${midx[$k]} "${prefix}│ │" "${prefix}├─╯" "${prefix}│"
             emit "${prefix}│"
         done
     fi
     # The wdir node draws directly above HEAD, at HEAD's depth — with -b the @
     # can sit mid-tree, under stacked branches.
     if (( has_changes )) && [[ $c == $head_sha ]]; then
-        local wdir_text_reset=
-        [[ -n $C_HEAD_TEXT ]] && wdir_text_reset=$C_RESET
-        emit_head wdir @ "${prefix}@  ${C_DRAFT_HASH}Uncommitted changes${C_RESET}${C_HEAD_TEXT}  ${wdir_summary}${wdir_text_reset}"
-        local stat_line=
-        for stat_line in $wdir_stat; do
-            emit "${prefix}│ ${stat_line}"
-        done
+        emit_wdir_node "$prefix"
         emit "${prefix}│"
     fi
     draft_node $c
@@ -2331,21 +2360,11 @@ function render_plan {
 
         case $el in
         (stack)
-            # Synthetic wdir node, drawn above the stack: @ marker, draft-colored
-            # label, the change summary in HEAD-text color. It connects straight
-            # down into the draft column when HEAD is a draft, otherwise it bends
+            # The wdir node, drawn above the stack. It connects straight down
+            # into the draft column when HEAD is a draft, otherwise it bends
             # into the public column.
             if (( has_changes )); then
-                local wdir_text_reset=
-                [[ -n $C_HEAD_TEXT ]] && wdir_text_reset=$C_RESET
-                emit_head wdir @ "${g}@  ${C_DRAFT_HASH}Uncommitted changes${C_RESET}${C_HEAD_TEXT}  ${wdir_summary}${wdir_text_reset}"
-                # stat_line already starts with one space (git's --stat lead); add
-                # one more so the marker sits 2 cols past the │ spine, aligning
-                # with commit text (│  subject) and the node header (@  Uncomm…).
-                local stat_line=
-                for stat_line in $wdir_stat; do
-                    emit "${g}│ ${stat_line}"
-                done
+                emit_wdir_node "$g"
                 if (( n_drafts > 0 )); then
                     emit "${g}│"
                 else
@@ -2367,26 +2386,14 @@ function render_plan {
                 fi
                 commit_header $idx $symbol "$g" "$C_DRAFT_HASH" "$text_color" 0
                 if (( di == n_drafts )); then
-                    # A stat or message body must stay in ITS commit's column:
-                    # printed after the ╭─╯ bend it would sit beside the public
-                    # commit below and read as THAT commit's. So when the
-                    # bottom draft has one, keep its subject in-column too and
-                    # close with a bare bend — the same shape the wdir node
-                    # takes on a public HEAD.
-                    if [[ -n ${commit_stats[${drafts[di]}]:-}${commit_msgs[${drafts[di]}]:-} ]]; then
-                        print_subject ${drafts[di]} $idx "${g}│" "${g}│"
-                        print_commit_msg ${drafts[di]} "${g}│"
-                        print_commit_stat ${drafts[di]} "${g}│"
-                        emit "$join"
-                    else
-                        print_subject ${drafts[di]} $idx "$join" "│"
-                    fi
+                    # The bottom draft bends into the public column — with a
+                    # body, a bare bend, the shape the wdir node takes on a
+                    # public HEAD.
+                    close_commit_rows ${drafts[di]} $idx "${g}│" "$join" "│"
                     emit "│"
                     spine='│'
                 else
-                    print_subject ${drafts[di]} $idx "${g}│" "${g}│"
-                    print_commit_msg ${drafts[di]} "${g}│"
-                    print_commit_stat ${drafts[di]} "${g}│"
+                    print_commit_rows ${drafts[di]} $idx "${g}│"
                     emit "${g}│"
                 fi
             done
@@ -2395,17 +2402,7 @@ function render_plan {
             # -b: a full draft tree above its fork-point public commit.
             bh=${el#tree:}
             emit_subtree $bh "$g"
-            # Same in-column rule as the stack's bottom draft: a stat or
-            # message body (and then its subject too) stays in the tree's
-            # column, closed by a bare bend.
-            if [[ -n ${commit_stats[$bh]:-}${commit_msgs[$bh]:-} ]]; then
-                print_subject $bh ${midx[$bh]} "${g}│" "${g}│"
-                print_commit_msg $bh "${g}│"
-                print_commit_stat $bh "${g}│"
-                emit "$join"
-            else
-                print_subject $bh ${midx[$bh]} "$join" "│"
-            fi
+            close_commit_rows $bh ${midx[$bh]} "${g}│" "$join" "│"
             emit "│"
             spine='│'
             ;;
@@ -2430,28 +2427,16 @@ function render_plan {
                 is_compact=1
             fi
             commit_header $idx $symbol '' "$C_PUBLIC_HASH" "$text_color" $is_compact
-            if (( pl_i == n_plan )); then
-                # The final row below this ("~" or the -f tail's spine)
-                # belongs to main — see the render_plan call there.
-                if (( is_compact )); then
-                    emit "│"
-                else
-                    print_subject $pp $idx "│" "│"
-                    print_commit_msg $pp "│"
-                fi
-                print_commit_stat $pp "│"
-            else
-                # Segment down to the next shown public: solid when it's a
-                # parent of this commit, dotted ╷ when commits are elided.
-                seg='╷'
-                [[ " ${parents[idx]} " == *" ${publics[pub_i+1]} "* ]] && seg='│'
-                if (( is_compact )); then
-                    emit "$seg"
-                else
-                    print_subject $pp $idx "$seg" "$seg"
-                    print_commit_msg $pp "$seg"
-                fi
-                print_commit_stat $pp "$seg"
+            # Segment down to the next shown public: solid when it's a parent
+            # of this commit, dotted ╷ when commits are elided. The last
+            # public's final row ("~" or the -f tail's spine) belongs to main
+            # — see the render_plan call there.
+            seg='│'
+            if (( pl_i < n_plan )); then
+                [[ " ${parents[idx]} " == *" ${publics[pub_i+1]} "* ]] || seg='╷'
+            fi
+            print_commit_rows $pp $idx "$seg" $is_compact
+            if (( pl_i < n_plan )); then
                 emit "$seg"
                 spine=$seg
             fi
@@ -2538,13 +2523,7 @@ function emit_tail_row {
         [[ -n $mbody ]] && commit_msgs[$fsha]=$mbody
     fi
     commit_header $idx ◆ '' "$C_PUBLIC_HASH" '' $is_compact
-    if (( is_compact )); then
-        emit "│"
-    else
-        print_subject $fsha $idx "│" "│"
-        print_commit_msg $fsha "│"
-    fi
-    print_commit_stat $fsha "│"
+    print_commit_rows $fsha $idx "│" $is_compact
     if [[ -n $p ]]; then
         emit "│"
     else

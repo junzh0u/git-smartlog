@@ -498,6 +498,9 @@ typeset -gi HASH_WIDTH=10
 # abbrev_hash()'s second output, alongside REPLY.
 typeset -gi REPLY_UNIQ=0
 
+# classify_change()'s second and third outputs, alongside REPLY.
+typeset -g REPLY_COL REPLY_HINT
+
 # filter_refs' second output: the branch names behind the refs it kept — the
 # active branch's name (even when its display is folded into the same-name
 # remote) and each remote bookmark stripped of its remote — i.e. the -p/--prs
@@ -728,6 +731,57 @@ function submodule_sublines {
     (( shown < n )) && reply+=("${lead}    ${dim}… +$(( n - shown )) more${reset}")
 }
 
+function classify_change {
+    # REPLY = the one-letter change marker for one `git diff --raw` record,
+    # REPLY_COL its color, REPLY_HINT a " +x"/" -x" executable-bit hint (or
+    # empty). $1 old mode, $2 new mode, $3 status (A, M, R087, ...), $4 path
+    # (the new path for a rename). Reads the caller's is_untracked and
+    # is_unmerged assocs via dynamic scoping: git reports an intent-to-added
+    # untracked file as A and a conflicted one as M, so both need the caller's
+    # side knowledge.
+    #   A new (staged)  green       ? untracked    dim green
+    #   D deleted       red         R/C renamed    blue
+    #   M modified      default     T typechange   magenta
+    #   S submodule     cyan        U unmerged     bold red
+    local om=$1 nm=$2 st=$3 p=$4
+    local mark= col= hint=
+    if [[ $om == 160000 || $nm == 160000 ]]; then
+        mark=S col=$'\e[36m'                  # submodule -> cyan
+    else
+        mark=${st:0:1}                        # A/M/D/R/C/T/U...
+        case $mark in
+            A) if [[ -n ${is_untracked[$p]:-} ]]; then
+                   mark='?' col=$'\e[2;32m'   # untracked -> dim green
+               else
+                   col=$'\e[32m'              # staged new -> green
+               fi ;;
+            D)   col=$'\e[31m' ;;             # deleted -> red
+            R|C) col=$'\e[34m' ;;             # renamed/copied -> blue
+            T)   col=$'\e[35m' ;;             # typechange (file<->symlink) -> magenta
+            U)   col=$'\e[1;31m' ;;           # unmerged/conflict -> bold red
+        esac
+        # Executable-bit flip that --stat renders as "| 0" (status M).
+        if [[ $mark == M && $om != $nm && $om != 000000 && $nm != 000000 ]]; then
+            [[ $nm == 100755 ]] && hint=' +x'
+            [[ $nm == 100644 && $om == 100755 ]] && hint=' -x'
+        fi
+    fi
+    # A conflicted path overrides everything else: unmerged -> bold red U.
+    [[ -n ${is_unmerged[$p]:-} ]] && { mark=U; col=$'\e[1;31m'; hint=; }
+    REPLY=$mark REPLY_COL=$col REPLY_HINT=$hint
+}
+
+function overlay_index {
+    # Build a throwaway index at $1: a copy of the index at $2 (skipped when
+    # it doesn't exist — an unborn repo) with the paths $3.. intent-to-added,
+    # so `git diff` against it renders those untracked files as new files
+    # without the real index ever changing. The caller owns $1's lifetime.
+    local dest=$1 src=$2; shift 2
+    [[ -f $src ]] && cp "$src" "$dest"
+    (( $# )) && GIT_INDEX_FILE=$dest git add -N -- "$@" 2>/dev/null
+    return 0
+}
+
 function uncommitted_stat {
     # Compute the uncommitted-changes stat block. $1 = color_on (1 to colorize the
     # marker/name and request colored +/- bars from git; 0 for plain). Sets globals
@@ -833,8 +887,7 @@ function uncommitted_stat {
         # no-op. The temp index is removed via `always`, even on an early error.
         if (( ${#untracked_files} )); then
             tmp_index=$(mktemp) || die "cannot create temp index"
-            [[ -f $stat_index ]] && cp "$stat_index" "$tmp_index"
-            GIT_INDEX_FILE=$tmp_index git add -N -- "${untracked_files[@]}" 2>/dev/null
+            overlay_index "$tmp_index" "$stat_index" "${untracked_files[@]}"
             stat_index=$tmp_index
         fi
 
@@ -991,11 +1044,7 @@ function uncommitted_stat {
 
         # Prefix each body filename with a one-letter change marker, classified from
         # `git diff --raw` against the same overlay, and color-code both marker and
-        # name by kind:
-        #   A new (staged)  green       ? untracked    dim green
-        #   D deleted       red         R/C renamed    blue
-        #   M modified      default     T typechange   magenta
-        #   S submodule     cyan        U unmerged     bold red
+        # name by kind (classify_change holds the table).
         # A pure executable-bit flip (chmod) is status M with a "| 0" stat, so it
         # would be invisible — surface it with a trailing "+x"/"-x" hint. The marker
         # is a uniform 2-char prefix on EVERY line, so git's pre-aligned '|' column
@@ -1024,33 +1073,10 @@ function uncommitted_stat {
             for raw_line in $raw_lines; do
                 local -a mf=(${=${raw_line%%$'\t'*}})   # :oldmode newmode oldsha newsha STATUS
                 local p=${raw_line##*$'\t'}             # path (new path for renames)
-                local om=${mf[1]#:} nm=${mf[2]} st=${mf[5]} mark= col= hint=
-                if [[ $om == 160000 || $nm == 160000 ]]; then
-                    mark=S col=$'\e[36m'                  # submodule -> cyan
-                else
-                    mark=${st:0:1}                        # A/M/D/R/C/T/U...
-                    case $mark in
-                        A) if [[ -n ${is_untracked[$p]} ]]; then
-                               mark='?' col=$'\e[2;32m'   # untracked -> dim green
-                           else
-                               col=$'\e[32m'              # staged new -> green
-                           fi ;;
-                        D)   col=$'\e[31m' ;;             # deleted -> red
-                        R|C) col=$'\e[34m' ;;             # renamed/copied -> blue
-                        T)   col=$'\e[35m' ;;             # typechange (file<->symlink) -> magenta
-                        U)   col=$'\e[1;31m' ;;           # unmerged/conflict -> bold red
-                    esac
-                    # Executable-bit flip that --stat renders as "| 0" (status M).
-                    if [[ $mark == M && $om != $nm && $om != 000000 && $nm != 000000 ]]; then
-                        [[ $nm == 100755 ]] && hint=' +x'
-                        [[ $nm == 100644 && $om == 100755 ]] && hint=' -x'
-                    fi
-                fi
-                # A conflicted path overrides everything else: unmerged -> bold red U.
-                [[ -n ${is_unmerged[$p]} ]] && { mark=U; col=$'\e[1;31m'; hint=; }
-                wdir_mark[$p]=$mark
-                wdir_col[$p]=$col
-                wdir_hint[$p]=$hint
+                classify_change ${mf[1]#:} ${mf[2]} ${mf[5]} "$p"
+                wdir_mark[$p]=$REPLY
+                wdir_col[$p]=$REPLY_COL
+                wdir_hint[$p]=$REPLY_HINT
             done
 
             if (( ${#wdir_mark} )); then

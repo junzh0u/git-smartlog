@@ -406,11 +406,12 @@ draws an \"Uncommitted changes\" node on top of HEAD, listing its files.
 
 The view flags below are independent and combine freely.
 
-  -i, --interactive   browse the graph in fzf: j/k step between commits, enter
-                      opens the selected one in git-smartshow (the
-                      uncommitted node opens the working copy), ? toggles its
-                      stat, / finds a row (needs fzf; off a terminal it
-                      prints the plain view, so it is safe in an alias)
+  -i, --interactive   browse the graph in fzf, always with -b -f: j/k step
+                      between commits, enter opens the selected one in
+                      git-smartshow (the uncommitted node opens the working
+                      copy), ? toggles its stat, / finds a row (needs fzf;
+                      off a terminal it prints the plain view, without the
+                      implied -b -f, so it is safe in an alias)
   -c, --changes       show per-file changes under every commit in the current
                       stack — or under the public commit in view when HEAD
                       sits on the trunk (pair with -f for history); the
@@ -2265,11 +2266,13 @@ function smartlog_interactive {
     # arrows move row by row, and the cursor starts on @. Reads main's ARG_*
     # by dynamic scoping; the child gets the view flags back, but not -C,
     # which this run has already applied (it runs from the same top level).
+    # Browsing always shows every branch and the full history (-b -f): a
+    # pager-sized plain view needs abbreviating, a scrollable fzf list does
+    # not. Only here — off a terminal -i never reaches this, so the plain
+    # view an alias prints into a pipe keeps its flags as given.
     (( $+commands[fzf] )) || die "-i needs fzf (https://github.com/junegunn/fzf)"
-    local -a child=()
+    local -a child=(-b -f)
     (( ${#ARG_CHANGES} )) && child+=(-c)
-    (( ${#ARG_BRANCHES} )) && child+=(-b)
-    (( ${#ARG_FULL} )) && child+=(-f)
     (( ${#ARG_MESSAGE} )) && child+=(-m)
     (( ${#ARG_PRS} )) && child+=(-p)
     (( ${#ARG_NO_PRS} )) && child+=(-P)

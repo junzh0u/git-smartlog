@@ -409,7 +409,7 @@ The view flags below are independent and combine freely.
   -i, --interactive   browse the graph in fzf, always with -b -f: j/k step
                       between commits, enter opens the selected one in
                       git-smartshow (the uncommitted node opens the working
-                      copy), ? toggles its stat, / finds a row (needs fzf;
+                      copy), ? hides its stat, / finds a row (needs fzf;
                       off a terminal it prints the plain view, without the
                       implied -b -f, so it is safe in an alias)
   -c, --changes       show per-file changes under every commit in the current
@@ -626,6 +626,18 @@ function term_size {
     [[ $tsz == <->" "<-> ]] && TERM_ROWS=${tsz%% *} TERM_COLS=${tsz##* }
     (( TERM_ROWS > 0 )) || { [[ $LINES == <-> ]] && TERM_ROWS=$LINES; }
     (( TERM_COLS > 0 )) || { [[ $COLUMNS == <-> ]] && (( COLUMNS >= 20 )) && TERM_COLS=$COLUMNS; }
+    # -i's child renders for fzf's list, which the stat pane beside it
+    # narrows: GIT_SMARTLOG_PANE_PCT percent of the width ($FZF_COLUMNS
+    # under a ctrl-r reload) goes to the pane, and fzf draws the list in
+    # what's left less its gutter and the gap before the border — 3 cells,
+    # where WIDTH_RESERVE takes 2. Under 40 columns fzf stacks the pane
+    # below instead, leaving the list the full width.
+    if (( ROW_TAG )) && [[ ${GIT_SMARTLOG_PANE_PCT:-} == <-> ]]; then
+        local -i cols=${FZF_COLUMNS:-$TERM_COLS} pane=0
+        pane=$(( cols * GIT_SMARTLOG_PANE_PCT / 100 ))
+        TERM_COLS=$cols
+        (( pane >= 40 )) && TERM_COLS=$(( cols - pane - 1 ))
+    fi
     return 0
 }
 
@@ -2263,7 +2275,9 @@ function smartlog_interactive {
     # Enter opens the node in git-smartshow — the commit's change, or for the
     # uncommitted node the working copy — and quitting that returns here. j/k
     # step between node header rows (listed by the child in heads), the
-    # arrows move row by row, and the cursor starts on @. Reads main's ARG_*
+    # arrows move row by row, and the cursor starts on @. The stat pane is
+    # open from the start, so the child renders for the list beside it
+    # (GIT_SMARTLOG_PANE_PCT, see term_size). Reads main's ARG_*
     # by dynamic scoping; the child gets the view flags back, but not -C,
     # which this run has already applied (it runs from the same top level).
     # Browsing always shows every branch and the full history (-b -f): a
@@ -2284,7 +2298,8 @@ function smartlog_interactive {
     trap "rm -rf -- ${(q)sdir}; exit 143" TERM
     {
         local heads=$sdir/heads qheads=${(qq)sdir}/heads
-        local src="GIT_SMARTLOG_ROWKEYS=$qheads ${(qq)SELF}${child:+ ${(j: :)${(@qq)child}}}"
+        local -i pane_pct=50
+        local src="GIT_SMARTLOG_PANE_PCT=$pane_pct GIT_SMARTLOG_ROWKEYS=$qheads ${(qq)SELF}${child:+ ${(j: :)${(@qq)child}}}"
         local key="GIT_SMARTLOG_MODE=key ${(qq)SELF}"
         local dim= reset=
         [[ -z $NO_COLOR ]] && dim=$'\e[2m' reset=$'\e[0m'
@@ -2307,14 +2322,14 @@ function smartlog_interactive {
         local -a fzf_args=(
             --ansi --no-sort --layout=reverse --no-input --no-multi
             --delimiter=$'\t' --with-nth=2.. --with-shell='sh -c'
-            --footer="${dim}j/k node  ↑/↓ row  ⏎ open  ? stat  / find  q quit${reset}"
+            --footer="${dim}j/k node  ⏎ open  ? stat  / find  q quit${reset}"
             --preview="GIT_SMARTLOG_MODE=preview ${(qq)SELF} {1}"
-            --preview-window='hidden,right,50%,border-left,<40(hidden,down,50%,border-top)'
+            --preview-window="right,${pane_pct}%,border-left,<40(down,50%,border-top)"
             --prompt='find: '
         )
         local bd=
         for bd in $binds; do fzf_args+=(--bind="$bd"); done
-        GIT_SMARTLOG_ROWKEYS=$heads "$SELF" $child | fzf "${fzf_args[@]}" >/dev/null
+        GIT_SMARTLOG_PANE_PCT=$pane_pct GIT_SMARTLOG_ROWKEYS=$heads "$SELF" $child | fzf "${fzf_args[@]}" >/dev/null
         return 0
     } always {
         rm -rf -- "$sdir"

@@ -458,7 +458,7 @@ The view flags below are independent and combine freely.
   -i, --interactive   browse the graph in fzf, always with -b -f: j/k step
                       between commits, enter opens the selected one in
                       git-smartshow (the uncommitted node opens the working
-                      copy), ? toggles its stat, / finds a row (needs fzf;
+                      copy), ? hides its stat, / finds a row (needs fzf;
                       off a terminal it prints the plain view, without the
                       implied -b -f, so it is safe in an alias)
   -c, --changes       show per-file changes under every commit in the current
@@ -501,7 +501,7 @@ less; GIT_PAGER=cat disables paging).
 
 ### Interactive
 
-`git smartlog -i` puts the same graph in [`fzf`](https://github.com/junegunn/fzf), with the cursor on `@`. `j`/`k` step from commit to commit, and the arrow keys move row by row. `enter` opens the selected commit in [`git-smartshow`](#git-smartshow) — its files as a tree, its diff beside them — and quitting that brings you back to the same row. On the uncommitted node, `enter` opens the working copy instead. `?` toggles a side pane with the commit's header and stat, `/` finds a row by its text (`enter` or `esc` goes back to the graph on the match), `ctrl-r` re-renders after you commit in another pane, and `q` quits.
+`git smartlog -i` puts the same graph in [`fzf`](https://github.com/junegunn/fzf), with the cursor on `@`. `j`/`k` step from commit to commit, and the arrow keys move row by row. `enter` opens the selected commit in [`git-smartshow`](#git-smartshow) — its files as a tree, its diff beside them — and quitting that brings you back to the same row. On the uncommitted node, `enter` opens the working copy instead. A side pane shows the selected commit's header and stat; `?` hides it and brings it back. `/` finds a row by its text (`enter` or `esc` goes back to the graph on the match), `ctrl-r` re-renders after you commit in another pane, and `q` quits.
 
 It always browses every branch with the full history — `-i` implies `-b -f`, since a scrollable list has no reason to abbreviate — and the other view flags combine with it: `git smartlog -i -c` is the full branch forest with per-file bodies, browsable. The graph is the regular renderer's own output: each row carries a hidden key naming the commit it belongs to, so a wrapped subject, a `-c` file line or a connector below a commit all open that commit. With `-f` in effect, fzf reads the streamed history to the end rather than lazily as you scroll. When stdout isn't a terminal, `-i` does nothing — the implied `-b -f` included — and the plain view prints, so it's safe to bake into an alias (`git config --global alias.sl 'smartlog -i'`) and still pipe `git sl`.
 

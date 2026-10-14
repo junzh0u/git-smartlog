@@ -407,9 +407,11 @@ draws an \"Uncommitted changes\" node on top of HEAD, listing its files.
 The view flags below are independent and combine freely.
 
   -i, --interactive   browse the graph in fzf, always with -b -f: j/k step
-                      between commits, enter opens the selected one in
-                      git-smartshow (the uncommitted node opens the working
-                      copy), ? hides its stat, / finds a row (needs fzf;
+                      between commits and g/G, ctrl-f/b, ctrl-d/u move like
+                      vim; the arrow, page and home/end keys scroll the stat
+                      pane beside it, which ? hides; enter opens the
+                      selected commit in git-smartshow (the uncommitted node
+                      opens the working copy), / finds a row (needs fzf;
                       off a terminal it prints the plain view, without the
                       implied -b -f, so it is safe in an alias)
   -c, --changes       show per-file changes under every commit in the current
@@ -2274,8 +2276,9 @@ function smartlog_interactive {
     # shows the rows untouched, hides the key, and hands it to the bindings.
     # Enter opens the node in git-smartshow — the commit's change, or for the
     # uncommitted node the working copy — and quitting that returns here. j/k
-    # step between node header rows (listed by the child in heads), the
-    # arrows move row by row, and the cursor starts on @. The stat pane is
+    # step between node header rows (listed by the child in heads), g/G jump
+    # to the first and last, the rest of the keys follow FZF_LIST_KEYS /
+    # FZF_PANE_KEYS, and the cursor starts on @. The stat pane is
     # open from the start, so the child renders for the list beside it
     # (GIT_SMARTLOG_PANE_PCT, see term_size). Reads main's ARG_*
     # by dynamic scoping; the child gets the view flags back, but not -C,
@@ -2311,6 +2314,9 @@ function smartlog_interactive {
         local -a binds=(
             "j:transform:awk -v n={n} '\$1>n{print \"pos(\" \$1+1 \")\"; exit}' $qheads"
             "k:transform:awk -v n={n} '\$1<n{p=\$1} END{if(p!=\"\")print \"pos(\" p+1 \")\"}' $qheads"
+            'g:first'
+            "G:transform:awk 'END{if(NR)print \"pos(\" \$1+1 \")\"}' $qheads"
+            $FZF_LIST_KEYS $FZF_PANE_KEYS
             "load:transform:awk -v n={n} 'n==0 && \$2==\"@\"{print \"pos(\" \$1+1 \")\"}' $qheads"
             "enter:transform:$key enter {1}"
             "esc:transform:$key esc {1}"
@@ -2322,7 +2328,7 @@ function smartlog_interactive {
         local -a fzf_args=(
             --ansi --no-sort --layout=reverse --no-input --no-multi
             --delimiter=$'\t' --with-nth=2.. --with-shell='sh -c'
-            --footer="${dim}j/k node  ⏎ open  ? stat  / find  q quit${reset}"
+            --footer="${dim}j/k node  g/G ends  ↑/↓ scroll${reset}"$'\n'"${dim}⏎ open  ? stat  / find  q quit${reset}"
             --preview="GIT_SMARTLOG_MODE=preview ${(qq)SELF} {1}"
             --preview-window="right,${pane_pct}%,border-left,<40(down,50%,border-top)"
             --prompt='find: '
@@ -2620,10 +2626,11 @@ clean. One revision shows that commit's change against its first parent, like
 git show; a range or two revisions show the diff between them, like git diff.
 Sidebar names carry git-smartstat's change markers and colors.
 
-  j / k               next / previous file
+  j / k               next / previous file; g / G first / last
+  ctrl-f / ctrl-b     page the file list; ctrl-d / ctrl-u half a page
   h / l               fold / unfold a directory (h on a file jumps to its directory)
-  ↑ / ↓               scroll the diff; space / b a page, d / u half a page,
-                      g / G to either end
+  ↑ / ↓               scroll the diff; page-down / page-up a page, home / end
+                      to either end
   t                   switch between difftastic and git's own diff
   /                   find a path (enter or esc returns to the tree)
   ctrl-r              reload after the working tree changed
@@ -2638,13 +2645,28 @@ Sidebar names carry git-smartstat's change markers and colors.
 Piped, it prints the diff once and exits, like git diff."
 }
 
+# Both fzf views — -i's graph and git-smartshow's file tree — share one key
+# scheme: letters steer the list, the way vim moves (j/k, g/G and these
+# paging chords), and the navigation block scrolls the pane beside it, the
+# way a pager does. Each view adds its own j/k/g/G, since what a list item
+# is differs: a commit's whole node there, one file here.
+typeset -ga FZF_LIST_KEYS=(
+    'ctrl-f:page-down' 'ctrl-b:page-up'
+    'ctrl-d:half-page-down' 'ctrl-u:half-page-up'
+)
+typeset -ga FZF_PANE_KEYS=(
+    'up:preview-up' 'down:preview-down'
+    'page-down:preview-page-down' 'page-up:preview-page-up'
+    'home:preview-top' 'end:preview-bottom'
+)
+
 # The letter keys -i binds; its `/` search unbinds them so they type into the
 # query, and leaving search rebinds them.
-SMARTLOG_LETTERS='j,k,q,/,?'
+SMARTLOG_LETTERS='j,k,g,G,q,/,?'
 
 # The keys git-smartshow binds to letters and arrows; `/` search unbinds them
 # so they type into the query, and leaving search rebinds them.
-SMARTSHOW_LETTERS='j,k,h,l,left,right,t,q,space,b,d,u,g,G,/'
+SMARTSHOW_LETTERS='j,k,g,G,h,l,left,right,t,q,/'
 
 # The sidebar's share of the terminal, and its floor: 36 columns leave the
 # 30-column key legend (smartshow_footer) whole beside fzf's gutter and the
@@ -3255,12 +3277,8 @@ function smartshow_main {
         local footer=$REPLY
 
         local -a binds=(
-            'j:down' 'k:up'
-            'up:preview-up' 'down:preview-down'
-            'space:preview-page-down' 'b:preview-page-up'
-            'page-down:preview-page-down' 'page-up:preview-page-up'
-            'd:preview-half-page-down' 'u:preview-half-page-up'
-            'g:preview-top' 'G:preview-bottom'
+            'j:down' 'k:up' 'g:first' 'G:last'
+            $FZF_LIST_KEYS $FZF_PANE_KEYS
             "h:transform:$KEY h {1}" "left:transform:$KEY h {1}"
             "l:transform:$KEY l {1}" "right:transform:$KEY l {1}"
             "t:transform:$KEY t {1}"

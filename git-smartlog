@@ -2290,10 +2290,13 @@ function smartlog_interactive {
         [[ -z $NO_COLOR ]] && dim=$'\e[2m' reset=$'\e[0m'
         # heads holds one zero-based row index per node header ("N @" for
         # the working copy); {n} is the cursor's, and pos() is one-based.
+        # load fires only once the stream ends — a second or more under -f's
+        # full history, long after j/k work — so it lands on @ only if the
+        # cursor is still on the first row, never yanking one already moved.
         local -a binds=(
             "j:transform:awk -v n={n} '\$1>n{print \"pos(\" \$1+1 \")\"; exit}' $qheads"
             "k:transform:awk -v n={n} '\$1<n{p=\$1} END{if(p!=\"\")print \"pos(\" p+1 \")\"}' $qheads"
-            "load:transform:awk '\$2==\"@\"{print \"pos(\" \$1+1 \")\"}' $qheads"
+            "load:transform:awk -v n={n} 'n==0 && \$2==\"@\"{print \"pos(\" \$1+1 \")\"}' $qheads"
             "enter:transform:$key enter {1}"
             "esc:transform:$key esc {1}"
             "/:show-input+unbind($SMARTLOG_LETTERS)"

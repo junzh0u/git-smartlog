@@ -458,11 +458,12 @@ The view flags below are independent and combine freely.
   -i, --interactive   browse the graph in fzf, always with -b -f: j/k step
                       between commits and g/G, ctrl-f/b, ctrl-d/u move like
                       vim; the arrow, page and home/end keys scroll the stat
-                      pane beside it, which ? hides; enter opens the
-                      selected commit in git-smartshow (the uncommitted node
-                      opens the working copy), / finds a row (needs fzf;
-                      off a terminal it prints the plain view, without the
-                      implied -b -f, so it is safe in an alias)
+                      pane beside it (space pages it down), which ? hides;
+                      enter opens the selected commit in git-smartshow (the
+                      uncommitted node opens the working copy), / finds a
+                      row (needs fzf; off a terminal it prints the plain
+                      view, without the implied -b -f, so it is safe in an
+                      alias)
   -c, --changes       show per-file changes under every commit in the current
                       stack — or under the public commit in view when HEAD
                       sits on the trunk (pair with -f for history); the
@@ -503,7 +504,7 @@ less; GIT_PAGER=cat disables paging).
 
 ### Interactive
 
-`git smartlog -i` puts the same graph in [`fzf`](https://github.com/junegunn/fzf), with the cursor on `@`. `j`/`k` step from commit to commit, and the rest of vim's motions move through the graph too — `g`/`G` to the first and last commit, `ctrl-f`/`ctrl-b` a page, `ctrl-d`/`ctrl-u` half a page — while the arrow, page and `home`/`end` keys scroll the side pane instead. [`git-smartshow`](#git-smartshow) splits its keys the same way. `enter` opens the selected commit in [`git-smartshow`](#git-smartshow) — its files as a tree, its diff beside them — and quitting that brings you back to the same row. On the uncommitted node, `enter` opens the working copy instead. A side pane shows the selected commit's header and stat; `?` hides it and brings it back. `/` finds a row by its text (`enter` or `esc` goes back to the graph on the match), `ctrl-r` re-renders after you commit in another pane, and `q` quits.
+`git smartlog -i` puts the same graph in [`fzf`](https://github.com/junegunn/fzf), with the cursor on `@`. `j`/`k` step from commit to commit, and the rest of vim's motions move through the graph too — `g`/`G` to the first and last commit, `ctrl-f`/`ctrl-b` a page, `ctrl-d`/`ctrl-u` half a page — while the arrow, page and `home`/`end` keys scroll the side pane instead, and `space` pages it down. [`git-smartshow`](#git-smartshow) splits its keys the same way. `enter` opens the selected commit in [`git-smartshow`](#git-smartshow) — its files as a tree, its diff beside them — and quitting that brings you back to the same row. On the uncommitted node, `enter` opens the working copy instead. A side pane shows the selected commit's header and stat; `?` hides it and brings it back. `/` finds a row by its text (`enter` or `esc` goes back to the graph on the match), `ctrl-r` re-renders after you commit in another pane, and `q` quits.
 
 It always browses every branch with the full history — `-i` implies `-b -f`, since a scrollable list has no reason to abbreviate — and the other view flags combine with it: `git smartlog -i -c` is the full branch forest with per-file bodies, browsable. The graph is the regular renderer's own output: each row carries a hidden key naming the commit it belongs to, so a wrapped subject, a `-c` file line or a connector below a commit all open that commit. With `-f` in effect, fzf reads the streamed history to the end rather than lazily as you scroll. When stdout isn't a terminal, `-i` does nothing — the implied `-b -f` included — and the plain view prints, so it's safe to bake into an alias (`git config --global alias.sl 'smartlog -i'`) and still pipe `git sl`.
 
@@ -593,8 +594,8 @@ Sidebar names carry git-smartstat's change markers and colors.
   j / k               next / previous file; g / G first / last
   ctrl-f / ctrl-b     page the file list; ctrl-d / ctrl-u half a page
   h / l               fold / unfold a directory (h on a file jumps to its directory)
-  ↑ / ↓               scroll the diff; page-down / page-up a page, home / end
-                      to either end
+  ↑ / ↓               scroll the diff; page-down (or space) / page-up a page,
+                      home / end to either end
   t                   switch between difftastic and git's own diff
   /                   find a path (enter or esc returns to the tree)
   ctrl-r              reload after the working tree changed

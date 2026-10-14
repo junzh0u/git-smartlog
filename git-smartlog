@@ -409,11 +409,12 @@ The view flags below are independent and combine freely.
   -i, --interactive   browse the graph in fzf, always with -b -f: j/k step
                       between commits and g/G, ctrl-f/b, ctrl-d/u move like
                       vim; the arrow, page and home/end keys scroll the stat
-                      pane beside it, which ? hides; enter opens the
-                      selected commit in git-smartshow (the uncommitted node
-                      opens the working copy), / finds a row (needs fzf;
-                      off a terminal it prints the plain view, without the
-                      implied -b -f, so it is safe in an alias)
+                      pane beside it (space pages it down), which ? hides;
+                      enter opens the selected commit in git-smartshow (the
+                      uncommitted node opens the working copy), / finds a
+                      row (needs fzf; off a terminal it prints the plain
+                      view, without the implied -b -f, so it is safe in an
+                      alias)
   -c, --changes       show per-file changes under every commit in the current
                       stack — or under the public commit in view when HEAD
                       sits on the trunk (pair with -f for history); the
@@ -2629,8 +2630,8 @@ Sidebar names carry git-smartstat's change markers and colors.
   j / k               next / previous file; g / G first / last
   ctrl-f / ctrl-b     page the file list; ctrl-d / ctrl-u half a page
   h / l               fold / unfold a directory (h on a file jumps to its directory)
-  ↑ / ↓               scroll the diff; page-down / page-up a page, home / end
-                      to either end
+  ↑ / ↓               scroll the diff; page-down (or space) / page-up a page,
+                      home / end to either end
   t                   switch between difftastic and git's own diff
   /                   find a path (enter or esc returns to the tree)
   ctrl-r              reload after the working tree changed
@@ -2648,8 +2649,10 @@ Piped, it prints the diff once and exits, like git diff."
 # Both fzf views — -i's graph and git-smartshow's file tree — share one key
 # scheme: letters steer the list, the way vim moves (j/k, g/G and these
 # paging chords), and the navigation block scrolls the pane beside it, the
-# way a pager does. Each view adds its own j/k/g/G, since what a list item
-# is differs: a commit's whole node there, one file here.
+# way a pager does — space included, paging it down like less (there is no
+# shift-space partner: a terminal sends it as a plain space). Each view
+# adds its own j/k/g/G, since what a list item is differs: a commit's whole
+# node there, one file here.
 typeset -ga FZF_LIST_KEYS=(
     'ctrl-f:page-down' 'ctrl-b:page-up'
     'ctrl-d:half-page-down' 'ctrl-u:half-page-up'
@@ -2658,15 +2661,16 @@ typeset -ga FZF_PANE_KEYS=(
     'up:preview-up' 'down:preview-down'
     'page-down:preview-page-down' 'page-up:preview-page-up'
     'home:preview-top' 'end:preview-bottom'
+    'space:preview-page-down'
 )
 
 # The letter keys -i binds; its `/` search unbinds them so they type into the
 # query, and leaving search rebinds them.
-SMARTLOG_LETTERS='j,k,g,G,q,/,?'
+SMARTLOG_LETTERS='j,k,g,G,space,q,/,?'
 
 # The keys git-smartshow binds to letters and arrows; `/` search unbinds them
 # so they type into the query, and leaving search rebinds them.
-SMARTSHOW_LETTERS='j,k,g,G,h,l,left,right,t,q,/'
+SMARTSHOW_LETTERS='j,k,g,G,space,h,l,left,right,t,q,/'
 
 # The sidebar's share of the terminal, and its floor: 36 columns leave the
 # 30-column key legend (smartshow_footer) whole beside fzf's gutter and the

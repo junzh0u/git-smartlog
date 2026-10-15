@@ -406,15 +406,16 @@ draws an \"Uncommitted changes\" node on top of HEAD, listing its files.
 
 The view flags below are independent and combine freely.
 
-  -i, --interactive   browse the graph in fzf, always with -b -f: j/k step
-                      between commits and g/G, ctrl-f/b, ctrl-d/u move like
-                      vim; the arrow, page and home/end keys scroll the stat
-                      pane beside it (space pages it down), which ? hides;
-                      enter opens the selected commit in git-smartshow (the
-                      uncommitted node opens the working copy), / finds a
-                      row, ctrl-j/k moving between matches (needs fzf; off a
-                      terminal it prints the plain view, without the implied
-                      -b -f, so it is safe in an alias)
+  -i, --interactive   browse the graph in fzf, always with -b -f: j/k (or
+                      ctrl-j/k) step between commits and g/G, ctrl-f/b,
+                      ctrl-d/u move like vim; the arrow, page and home/end
+                      keys scroll the stat pane beside it (space pages it
+                      down), which ? hides; enter opens the selected commit
+                      in git-smartshow (the uncommitted node opens the
+                      working copy), / finds a row, ctrl-j/k moving between
+                      matches (needs fzf; off a terminal it prints the plain
+                      view, without the implied -b -f, so it is safe in an
+                      alias)
   -c, --changes       show per-file changes under every commit in the current
                       stack — or under the public commit in view when HEAD
                       sits on the trunk (pair with -f for history); the
@@ -2326,9 +2327,16 @@ function smartlog_interactive {
         # load fires only once the stream ends — a second or more under -f's
         # full history, long after j/k work — so it lands on @ only if the
         # cursor is still on the first row, never yanking one already moved.
+        # ctrl-j/k step the same way while browsing, but in `/` search,
+        # where j/k type into the query, they keep fzf's own row moves.
+        local next="awk -v n={n} '\$1>n{print \"pos(\" \$1+1 \")\"; exit}' $qheads"
+        local prev="awk -v n={n} '\$1<n{p=\$1} END{if(p!=\"\")print \"pos(\" p+1 \")\"}' $qheads"
+        local browsing='[ "$FZF_INPUT_STATE" = hidden ]'
         local -a binds=(
-            "j:transform:awk -v n={n} '\$1>n{print \"pos(\" \$1+1 \")\"; exit}' $qheads"
-            "k:transform:awk -v n={n} '\$1<n{p=\$1} END{if(p!=\"\")print \"pos(\" p+1 \")\"}' $qheads"
+            "j:transform:$next"
+            "k:transform:$prev"
+            "ctrl-j:transform:if $browsing; then $next; else echo down; fi"
+            "ctrl-k:transform:if $browsing; then $prev; else echo up; fi"
             'g:first'
             "G:transform:awk 'END{if(NR)print \"pos(\" \$1+1 \")\"}' $qheads"
             $FZF_LIST_KEYS $FZF_PANE_KEYS

@@ -412,9 +412,9 @@ The view flags below are independent and combine freely.
                       pane beside it (space pages it down), which ? hides;
                       enter opens the selected commit in git-smartshow (the
                       uncommitted node opens the working copy), / finds a
-                      row (needs fzf; off a terminal it prints the plain
-                      view, without the implied -b -f, so it is safe in an
-                      alias)
+                      row, ctrl-j/k moving between matches (needs fzf; off a
+                      terminal it prints the plain view, without the implied
+                      -b -f, so it is safe in an alias)
   -c, --changes       show per-file changes under every commit in the current
                       stack — or under the public commit in view when HEAD
                       sits on the trunk (pair with -f for history); the
@@ -2271,6 +2271,19 @@ function main {
     fi
 }
 
+function smartlog_footer {
+    # REPLY = -i's key legend for $1: browse (the graph's own keys) or find
+    # (`/` search, where the letters type into the query and fzf's default
+    # ctrl-j/k move the selection a row at a time). Dim unless NO_COLOR.
+    local dim= reset=
+    [[ -z $NO_COLOR ]] && dim=$'\e[2m' reset=$'\e[0m'
+    if [[ $1 == find ]]; then
+        REPLY="${dim}ctrl-j/k move  ↑/↓ scroll${reset}"$'\n'"${dim}⏎ go to row  esc back${reset}"
+    else
+        REPLY="${dim}j/k node  g/G ends  ↑/↓ scroll${reset}"$'\n'"${dim}⏎ open  ? stat  / find  q quit${reset}"
+    fi
+}
+
 function smartlog_interactive {
     # -i: browse the rendered graph in fzf. A child run of this file renders
     # the same view with every row tagged by its node's key (see emit); fzf
@@ -2305,8 +2318,9 @@ function smartlog_interactive {
         local -i pane_pct=50
         local src="GIT_SMARTLOG_PANE_PCT=$pane_pct GIT_SMARTLOG_ROWKEYS=$qheads ${(qq)SELF}${child:+ ${(j: :)${(@qq)child}}}"
         local key="GIT_SMARTLOG_MODE=key ${(qq)SELF}"
-        local dim= reset=
-        [[ -z $NO_COLOR ]] && dim=$'\e[2m' reset=$'\e[0m'
+        local browse_footer= find_footer=
+        smartlog_footer browse; browse_footer=$REPLY
+        smartlog_footer find; find_footer=$REPLY
         # heads holds one zero-based row index per node header ("N @" for
         # the working copy); {n} is the cursor's, and pos() is one-based.
         # load fires only once the stream ends — a second or more under -f's
@@ -2321,7 +2335,7 @@ function smartlog_interactive {
             "load:transform:awk -v n={n} 'n==0 && \$2==\"@\"{print \"pos(\" \$1+1 \")\"}' $qheads"
             "enter:transform:$key enter {1}"
             "esc:transform:$key esc {1}"
-            "/:show-input+unbind($SMARTLOG_LETTERS)"
+            "/:show-input+unbind($SMARTLOG_LETTERS)+change-footer:$find_footer"
             "?:toggle-preview"
             "ctrl-r:reload:$src"
             'q:abort'
@@ -2329,7 +2343,7 @@ function smartlog_interactive {
         local -a fzf_args=(
             --ansi --no-sort --layout=reverse --no-input --no-multi
             --delimiter=$'\t' --with-nth=2.. --with-shell='sh -c'
-            --footer="${dim}j/k node  g/G ends  ↑/↓ scroll${reset}"$'\n'"${dim}⏎ open  ? stat  / find  q quit${reset}"
+            --footer="$browse_footer"
             --preview="GIT_SMARTLOG_MODE=preview ${(qq)SELF} {1}"
             --preview-window="right,${pane_pct}%,border-left,<40(down,50%,border-top)"
             --prompt='find: '
@@ -2358,7 +2372,8 @@ function smartlog_internal {
         key)
             local action=$1 k=${2:-}
             if [[ ${FZF_INPUT_STATE:-hidden} != hidden ]]; then
-                print -r -- "track-current+clear-query+search()+hide-input+rebind($SMARTLOG_LETTERS)"
+                smartlog_footer browse
+                print -r -- "track-current+clear-query+search()+hide-input+rebind($SMARTLOG_LETTERS)+change-footer:$REPLY"
             elif [[ $action == esc ]]; then
                 print -r -- abort
             elif [[ -n $k ]]; then

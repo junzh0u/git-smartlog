@@ -2667,31 +2667,35 @@ function smartstat_main {
 function smartshow_usage {
     # The browser's two names share its keys and options; only what their
     # revisions mean differs — git show's reading or git diff's.
+    # Each name's forms, as a two-column table: the command padded to $w.
+    local -i w=$(( ${#PROG} + 10 ))
     if [[ $PROG == *smartdiff ]]; then
-        print -r -- "usage: $PROG [-C <path>] [--tool TOOL] [--list] [<rev> | <rev> <rev> | <rev>..<rev>] [-- <path>...]
+        print -r -- "usage: $PROG [options] [<rev> [<rev>] | <rev>..<rev>] [-- <path>...]
 
-Browse a comparison as a file tree beside the diff itself: the changed files
-in a sidebar on the left, the selected file's diff in the main pane on the
-right (needs fzf). It reads its revisions like git diff, with the working
-copy standing in for git's index: with no revision it compares the working
-copy with HEAD — the uncommitted changes, untracked files included; one
-revision compares that commit with the working copy, everything from there
-to the files on disk; two revisions or a range compare those. Sidebar names
-carry git-smartstat's change markers and colors.
+git diff in a two-pane browser: the changed files as a tree, the selected
+file's diff beside it. Unlike git diff, the working copy is the files on
+disk — staged or not, untracked included.
+
+  ${(r:w:)PROG}HEAD → working copy: all uncommitted changes
+  ${(r:w:):-$PROG <rev>}<rev> → working copy
+  ${(r:w:):-$PROG <a> <b>}<a> → <b>, as git diff <a> <b>; <a>..<b> too
+
+For one commit's own change, use git-smartshow.
 "
     else
-        print -r -- "usage: $PROG [-C <path>] [--tool TOOL] [--list] [<rev>] [-- <path>...]
+        print -r -- "usage: $PROG [options] [<rev>] [-- <path>...]
 
-Browse a change as a file tree beside the diff itself: the changed files in a
-sidebar on the left, the selected file's diff in the main pane on the right
-(needs fzf). With no revision it shows @ — the working copy's uncommitted
-changes, untracked files included, or HEAD's own change when the tree is
-clean. A revision shows that commit's change against its first parent, like
-git show; git-smartdiff compares any two points instead. Sidebar names carry
-git-smartstat's change markers and colors.
+git show in a two-pane browser: the changed files as a tree, the selected
+file's diff beside it.
+
+  ${(r:w:)PROG}uncommitted changes, untracked too; HEAD's if clean
+  ${(r:w:):-$PROG <rev>}<rev>'s own change, as git show <rev>
+
+To compare two points, use git-smartdiff.
 "
     fi
-    print -r -- "  j / k               next / previous file; g / G first / last
+    print -r -- "Keys:
+  j / k               next / previous file; g / G first / last
   ctrl-f / ctrl-b     page the file list; ctrl-d / ctrl-u half a page
   h / l               fold / unfold a directory (h on a file jumps to its directory)
   ↑ / ↓               scroll the diff; page-down (or space) / page-up a page,
@@ -2701,13 +2705,14 @@ git-smartstat's change markers and colors.
   ctrl-r              reload after the working tree changed
   q, esc              quit
 
+Options:
       --tool TOOL     diff renderer: auto (default — difft when installed), difft,
                       or git; \$GIT_SMARTSHOW_TOOL sets the default
       --list          print the sidebar's file tree and exit
   -C <path>           run as if started in <path>, like git's own -C
   -h, --help          show this help and exit
 
-Piped, it prints the diff once and exits, like git diff."
+Needs fzf. Piped, it prints the diff once and exits."
 }
 
 # Both fzf views — -i's graph and git-smartshow's file tree — share one key

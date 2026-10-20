@@ -585,16 +585,17 @@ ln -s git-smartlog ~/.local/bin/git-smartshow
 ```
 
 ```
-usage: git-smartshow [-C <path>] [--tool TOOL] [--list] [<rev>] [-- <path>...]
+usage: git-smartshow [options] [<rev>] [-- <path>...]
 
-Browse a change as a file tree beside the diff itself: the changed files in a
-sidebar on the left, the selected file's diff in the main pane on the right
-(needs fzf). With no revision it shows @ — the working copy's uncommitted
-changes, untracked files included, or HEAD's own change when the tree is
-clean. A revision shows that commit's change against its first parent, like
-git show; git-smartdiff compares any two points instead. Sidebar names carry
-git-smartstat's change markers and colors.
+git show in a two-pane browser: the changed files as a tree, the selected
+file's diff beside it.
 
+  git-smartshow          uncommitted changes, untracked too; HEAD's if clean
+  git-smartshow <rev>    <rev>'s own change, as git show <rev>
+
+To compare two points, use git-smartdiff.
+
+Keys:
   j / k               next / previous file; g / G first / last
   ctrl-f / ctrl-b     page the file list; ctrl-d / ctrl-u half a page
   h / l               fold / unfold a directory (h on a file jumps to its directory)
@@ -605,13 +606,14 @@ git-smartstat's change markers and colors.
   ctrl-r              reload after the working tree changed
   q, esc              quit
 
+Options:
       --tool TOOL     diff renderer: auto (default — difft when installed), difft,
                       or git; $GIT_SMARTSHOW_TOOL sets the default
       --list          print the sidebar's file tree and exit
   -C <path>           run as if started in <path>, like git's own -C
   -h, --help          show this help and exit
 
-Piped, it prints the diff once and exits, like git diff.
+Needs fzf. Piped, it prints the diff once and exits.
 ```
 
 With no arguments it opens `@` — the node `git smartlog` marks `@`. On a dirty tree that's the uncommitted changes, and the sidebar lists exactly the files the uncommitted node does, with the same markers and colors. Untracked files diff as new files through the same throwaway index, and an untracked directory unfolds into its files, since the tree can fold it back. The sidebar is what `--list` prints:
@@ -651,17 +653,19 @@ ln -s git-smartlog ~/.local/bin/git-smartdiff
 ```
 
 ```
-usage: git-smartdiff [-C <path>] [--tool TOOL] [--list] [<rev> | <rev> <rev> | <rev>..<rev>] [-- <path>...]
+usage: git-smartdiff [options] [<rev> [<rev>] | <rev>..<rev>] [-- <path>...]
 
-Browse a comparison as a file tree beside the diff itself: the changed files
-in a sidebar on the left, the selected file's diff in the main pane on the
-right (needs fzf). It reads its revisions like git diff, with the working
-copy standing in for git's index: with no revision it compares the working
-copy with HEAD — the uncommitted changes, untracked files included; one
-revision compares that commit with the working copy, everything from there
-to the files on disk; two revisions or a range compare those. Sidebar names
-carry git-smartstat's change markers and colors.
+git diff in a two-pane browser: the changed files as a tree, the selected
+file's diff beside it. Unlike git diff, the working copy is the files on
+disk — staged or not, untracked included.
 
+  git-smartdiff          HEAD → working copy: all uncommitted changes
+  git-smartdiff <rev>    <rev> → working copy
+  git-smartdiff <a> <b>  <a> → <b>, as git diff <a> <b>; <a>..<b> too
+
+For one commit's own change, use git-smartshow.
+
+Keys:
   j / k               next / previous file; g / G first / last
   ctrl-f / ctrl-b     page the file list; ctrl-d / ctrl-u half a page
   h / l               fold / unfold a directory (h on a file jumps to its directory)
@@ -672,13 +676,14 @@ carry git-smartstat's change markers and colors.
   ctrl-r              reload after the working tree changed
   q, esc              quit
 
+Options:
       --tool TOOL     diff renderer: auto (default — difft when installed), difft,
                       or git; $GIT_SMARTSHOW_TOOL sets the default
       --list          print the sidebar's file tree and exit
   -C <path>           run as if started in <path>, like git's own -C
   -h, --help          show this help and exit
 
-Piped, it prints the diff once and exits, like git diff.
+Needs fzf. Piped, it prints the diff once and exits.
 ```
 
 The working copy stands in for git's index, untracked files included: with no revision it's the uncommitted changes, and one revision compares that commit with the files on disk — what `d` opens from `git smartlog -i`. Here `HEAD`'s own change to `http_client.go` and `version.go` folds into the uncommitted ones:

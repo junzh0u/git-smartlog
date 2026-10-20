@@ -19,11 +19,15 @@
 # installed) beside it. It shares the change markers (classify_change) and the
 # untracked overlay (overlay_index) with the stat block, so the files the wdir
 # node lists are exactly the ones it opens; fzf is its own opt-in dependency.
+# The fourth, `git-smartdiff`, is the same browser read like git diff instead
+# of git show: it compares two points — a commit with the working copy, or
+# two revisions — where smartshow shows one change.
 #
 # Completion: completions/_git-smartlog, completions/_git-smartstat,
-# completions/_git-smartshow — keep in sync when adding/changing options. The
-# _git-<name> naming makes them cover the `git smartlog` / `git smartstat` /
-# `git smartshow` subcommand forms too.
+# completions/_git-smartshow, completions/_git-smartdiff — keep in sync when
+# adding/changing options. The _git-<name> naming makes them cover the
+# `git smartlog` / `git smartstat` / `git smartshow` / `git smartdiff`
+# subcommand forms too.
 #
 # Views
 #   - Single stack by default: renders the CURRENT HEAD's first-parent draft
@@ -2640,17 +2644,33 @@ function smartstat_main {
 }
 
 function smartshow_usage {
-    print -r -- "usage: $PROG [-C <path>] [--tool TOOL] [--list] [<rev> | <rev>..<rev> | <rev> <rev>] [-- <path>...]
+    # The browser's two names share its keys and options; only what their
+    # revisions mean differs — git show's reading or git diff's.
+    if [[ $PROG == *smartdiff ]]; then
+        print -r -- "usage: $PROG [-C <path>] [--tool TOOL] [--list] [<rev> | <rev> <rev> | <rev>..<rev>] [-- <path>...]
 
-Browse a diff as a file tree beside the diff itself: the changed files in a
+Browse a comparison as a file tree beside the diff itself: the changed files
+in a sidebar on the left, the selected file's diff in the main pane on the
+right (needs fzf). It reads its revisions like git diff, with the working
+copy standing in for git's index: with no revision it compares the working
+copy with HEAD — the uncommitted changes, untracked files included; one
+revision compares that commit with the working copy, everything from there
+to the files on disk; two revisions or a range compare those. Sidebar names
+carry git-smartstat's change markers and colors.
+"
+    else
+        print -r -- "usage: $PROG [-C <path>] [--tool TOOL] [--list] [<rev>] [-- <path>...]
+
+Browse a change as a file tree beside the diff itself: the changed files in a
 sidebar on the left, the selected file's diff in the main pane on the right
 (needs fzf). With no revision it shows @ — the working copy's uncommitted
 changes, untracked files included, or HEAD's own change when the tree is
-clean. One revision shows that commit's change against its first parent, like
-git show; a range or two revisions show the diff between them, like git diff.
-Sidebar names carry git-smartstat's change markers and colors.
-
-  j / k               next / previous file; g / G first / last
+clean. A revision shows that commit's change against its first parent, like
+git show; git-smartdiff compares any two points instead. Sidebar names carry
+git-smartstat's change markers and colors.
+"
+    fi
+    print -r -- "  j / k               next / previous file; g / G first / last
   ctrl-f / ctrl-b     page the file list; ctrl-d / ctrl-u half a page
   h / l               fold / unfold a directory (h on a file jumps to its directory)
   ↑ / ↓               scroll the diff; page-down (or space) / page-up a page,
@@ -3188,7 +3208,14 @@ function smartshow_main {
         [[ $a == -* ]] && { print -ru2 -- "$PROG: unknown option: $a"; smartshow_usage >&2; exit 2; }
     done
     revs=("$@")
+    local -i is_diff=0
+    [[ $PROG == *smartdiff ]] && is_diff=1
     (( ${#revs} <= 2 )) || { print -ru2 -- "$PROG: too many revisions"; smartshow_usage >&2; exit 2; }
+    if (( ! is_diff )) && [[ ${#revs} -gt 1 || ${revs[1]:-} == *..* ]]; then
+        print -ru2 -- "$PROG: shows one commit; compare two with git-smartdiff"
+        smartshow_usage >&2
+        exit 2
+    fi
     cd_dash_C $ARG_CD
 
     git rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
@@ -3213,18 +3240,28 @@ function smartshow_main {
     esac
     [[ $tool == difft ]] && (( ! $+commands[difft] )) && die "--tool difft: difft not found"
 
-    # What to show. No revision means @, the node the smartlog marks with @:
-    # the uncommitted changes when there are any (within the pathspec), else
-    # HEAD's own change. One revision is that commit against its first parent
-    # — git show, not git diff, because this is a viewer for the smartlog's
-    # nodes. A range or a pair is git diff's own reading.
+    # What to show. As git-smartshow, a viewer for the smartlog's nodes: no
+    # revision means @, the node the smartlog marks with @ — the uncommitted
+    # changes when there are any (within the pathspec), else HEAD's own
+    # change — and one revision is that commit against its first parent, like
+    # git show. As git-smartdiff, git diff's reading with the working copy
+    # (untracked files included, through the overlay) where git would use the
+    # index: none is the working copy against HEAD, one is that commit against
+    # the working copy, and a pair or a range is git diff's own.
     local spec_mode=diff title= sha= parent=
     local -a spec_args=()
     local c_dim= c_reset= c_head= c_hash=
     if (( TTY_OUT )) && [[ -z $NO_COLOR ]]; then
         c_dim=$'\e[2m' c_reset=$'\e[0m' c_head=$'\e[35m' c_hash=$'\e[93;1m'
     fi
-    if (( ! ${#revs} )) && [[ -n $(git status --porcelain -- $pathspec 2>/dev/null) ]]; then
+    if (( is_diff )) && (( ${#revs} == 1 )) && [[ ${revs[1]} != *..* ]]; then
+        sha=$(git rev-parse --verify --quiet "${revs[1]}^{commit}" 2>/dev/null) ||
+            die "${revs[1]}: not a commit"
+        spec_mode=wdir
+        spec_args=($sha)
+        title="${revs[1]} → @"
+    elif (( ! ${#revs} )) &&
+         { (( is_diff )) || [[ -n $(git status --porcelain -- $pathspec 2>/dev/null) ]]; }; then
         spec_mode=wdir
         spec_args=(HEAD)
         if ! git rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
@@ -3232,7 +3269,7 @@ function smartshow_main {
             spec_args=($REPLY)
         fi
         title="@  ${c_hash}Uncommitted changes${c_reset}"
-    elif (( ${#revs} <= 1 )) && [[ ${revs[1]:-HEAD} != *..* ]]; then
+    elif (( ! is_diff )); then
         if (( ! ${#revs} )) && ! git rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
             print -ru2 -- "$PROG: nothing to show"    # unborn and clean
             return 0
@@ -3400,7 +3437,8 @@ function run_paged {
 }
 
 # Multi-call dispatch on the invocation name: git-smartstat runs only the stat
-# block, git-smartshow the file-tree diff browser, anything else (git-smartlog)
+# block, git-smartshow and git-smartdiff the file-tree diff browser (showing a
+# change or comparing two points), anything else (git-smartlog)
 # runs the full smartlog paged (see run_paged; smartstat's block is short and
 # feeds scripts, so it never pages, and smartshow brings its own fzf UI).
 # Ahead of the name, GIT_SMARTSHOW_MODE marks one of smartshow's fzf callbacks,
@@ -3415,6 +3453,6 @@ if [[ -n ${GIT_SMARTSHOW_MODE:-} ]]; then
 fi
 case $PROG in
     git-smartstat|smartstat) smartstat_main "$@" ;;
-    git-smartshow|smartshow) smartshow_main "$@" ;;
+    git-smartshow|smartshow|git-smartdiff|smartdiff) smartshow_main "$@" ;;
     *)                       run_paged main "$@" ;;
 esac

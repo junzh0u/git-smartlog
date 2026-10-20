@@ -97,6 +97,15 @@ git update-ref refs/remotes/origin/y HEAD
 expect "origin/y at y's commit still hides it" \
     "$("$REPO/git-smartlog" -b)" '*@  *  origin/feat/y origin/y x*'
 
+# smartshow shows one change; comparing two points is smartdiff's, so a pair
+# or a range given to smartshow says where to go instead of diffing anyway.
+new_repo show-vs-diff
+print a >| f && git add f && git commit -qm one
+expect "smartshow sends a pair to smartdiff" \
+    "$("$REPO/git-smartshow" HEAD HEAD 2>&1)" '*compare two with git-smartdiff'
+expect "smartshow sends a range to smartdiff" \
+    "$("$REPO/git-smartshow" HEAD..HEAD 2>&1)" '*compare two with git-smartdiff'
+
 print
 if (( failures )); then
     print -r -- "$failures of $checks regression checks failed"

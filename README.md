@@ -457,15 +457,17 @@ draws an "Uncommitted changes" node on top of HEAD, listing its files.
 
 The view flags below are independent and combine freely.
 
-  -i, --interactive   browse the graph in fzf, always with -b -f: j/k step
-                      between commits and g/G, ctrl-f/b, ctrl-d/u move like
-                      vim; the arrow, page and home/end keys scroll the stat
-                      pane beside it (space pages it down), which ? hides;
-                      enter opens the selected commit in git-smartshow (the
-                      uncommitted node opens the working copy), / finds a
-                      row (needs fzf; off a terminal it prints the plain
-                      view, without the implied -b -f, so it is safe in an
-                      alias)
+  -i, --interactive   browse the graph in fzf, always with -b -f: j/k (or
+                      ctrl-j/k) step between commits and g/G, ctrl-f/b,
+                      ctrl-d/u move like vim; the arrow, page and home/end
+                      keys scroll the stat pane beside it (space pages it
+                      down), which ? hides; enter opens the selected commit
+                      in git-smartshow (the uncommitted node opens the
+                      working copy), d compares it with the working copy
+                      in git-smartdiff; / finds a row,
+                      ctrl-j/k moving between matches (needs fzf; off a
+                      terminal it prints the plain view, without the
+                      implied -b -f, so it is safe in an alias)
   -c, --changes       show per-file changes under every commit in the current
                       stack — or under the public commit in view when HEAD
                       sits on the trunk (pair with -f for history); the
@@ -506,7 +508,7 @@ less; GIT_PAGER=cat disables paging).
 
 ### Interactive
 
-`git smartlog -i` puts the same graph in [`fzf`](https://github.com/junegunn/fzf), with the cursor on `@`. `j`/`k` step from commit to commit, and the rest of vim's motions move through the graph too — `g`/`G` to the first and last commit, `ctrl-f`/`ctrl-b` a page, `ctrl-d`/`ctrl-u` half a page — while the arrow, page and `home`/`end` keys scroll the side pane instead, and `space` pages it down. [`git-smartshow`](#git-smartshow) splits its keys the same way. `enter` opens the selected commit in [`git-smartshow`](#git-smartshow) — its files as a tree, its diff beside them — and quitting that brings you back to the same row. On the uncommitted node, `enter` opens the working copy instead. A side pane shows the selected commit's header and stat; `?` hides it and brings it back. `/` finds a row by its text (`enter` or `esc` goes back to the graph on the match), `ctrl-r` re-renders after you commit in another pane, and `q` quits.
+`git smartlog -i` puts the same graph in [`fzf`](https://github.com/junegunn/fzf), with the cursor on `@`. `j`/`k` step from commit to commit, and the rest of vim's motions move through the graph too — `g`/`G` to the first and last commit, `ctrl-f`/`ctrl-b` a page, `ctrl-d`/`ctrl-u` half a page — while the arrow, page and `home`/`end` keys scroll the side pane instead, and `space` pages it down. [`git-smartshow`](#git-smartshow) splits its keys the same way. `enter` opens the selected commit in [`git-smartshow`](#git-smartshow) — its files as a tree, its diff beside them — and quitting that brings you back to the same row. On the uncommitted node, `enter` opens the working copy instead. `d` compares the selected commit with the working copy in [`git-smartdiff`](#git-smartdiff) instead — everything from there to the files on disk, uncommitted and untracked changes included. A side pane shows the selected commit's header and stat; `?` hides it and brings it back. `/` finds a row by its text (`enter` or `esc` goes back to the graph on the match), `ctrl-r` re-renders after you commit in another pane, and `q` quits.
 
 It always browses every branch with the full history — `-i` implies `-b -f`, since a scrollable list has no reason to abbreviate — and the other view flags combine with it: `git smartlog -i -c` is the full branch forest with per-file bodies, browsable. The graph is the regular renderer's own output: each row carries a hidden key naming the commit it belongs to, so a wrapped subject, a `-c` file line or a connector below a commit all open that commit. With `-f` in effect, fzf reads the streamed history to the end rather than lazily as you scroll. When stdout isn't a terminal, `-i` does nothing — the implied `-b -f` included — and the plain view prints, so it's safe to bake into an alias (`git config --global alias.sl 'smartlog -i'`) and still pipe `git sl`.
 
@@ -679,7 +681,7 @@ carry git-smartstat's change markers and colors.
 Piped, it prints the diff once and exits, like git diff.
 ```
 
-The working copy stands in for git's index, untracked files included: with no revision it's the uncommitted changes, and one revision compares that commit with the files on disk. Here `HEAD`'s own change to `http_client.go` and `version.go` folds into the uncommitted ones:
+The working copy stands in for git's index, untracked files included: with no revision it's the uncommitted changes, and one revision compares that commit with the files on disk — what `d` opens from `git smartlog -i`. Here `HEAD`'s own change to `http_client.go` and `version.go` folds into the uncommitted ones:
 
 <!-- fixture: demo -->
 ```text

@@ -67,7 +67,8 @@
 #   - Interactive (opt-in via -i/--interactive; needs fzf): the same view in
 #     fzf, rendered by a child run of this file with every row tagged by its
 #     node (emit / emit_head). j/k step between nodes, enter opens one in
-#     git-smartshow, and that is where diffs live — this view stays a log.
+#     git-smartshow and d compares it with the working copy in git-smartdiff,
+#     and that is where diffs live — this view stays a log.
 #     Every view flag combines with it; under -f fzf reads the streamed
 #     history eagerly, so the pager's laziness doesn't carry over.
 #
@@ -416,10 +417,11 @@ The view flags below are independent and combine freely.
                       keys scroll the stat pane beside it (space pages it
                       down), which ? hides; enter opens the selected commit
                       in git-smartshow (the uncommitted node opens the
-                      working copy), / finds a row, ctrl-j/k moving between
-                      matches (needs fzf; off a terminal it prints the plain
-                      view, without the implied -b -f, so it is safe in an
-                      alias)
+                      working copy), d compares it with the working copy
+                      in git-smartdiff; / finds a row,
+                      ctrl-j/k moving between matches (needs fzf; off a
+                      terminal it prints the plain view, without the
+                      implied -b -f, so it is safe in an alias)
   -c, --changes       show per-file changes under every commit in the current
                       stack — or under the public commit in view when HEAD
                       sits on the trunk (pair with -f for history); the
@@ -2285,7 +2287,7 @@ function smartlog_footer {
     if [[ $1 == find ]]; then
         REPLY="${dim}ctrl-j/k move  ↑/↓ scroll${reset}"$'\n'"${dim}⏎ go to row  esc back${reset}"
     else
-        REPLY="${dim}j/k node  g/G ends  ↑/↓ scroll${reset}"$'\n'"${dim}⏎ open  ? stat  / find  q quit${reset}"
+        REPLY="${dim}j/k node  g/G ends  ↑/↓ scroll${reset}"$'\n'"${dim}⏎ open  d diff vs @  ? stat${reset}"$'\n'"${dim}/ find  q quit${reset}"
     fi
 }
 
@@ -2294,7 +2296,10 @@ function smartlog_interactive {
     # the same view with every row tagged by its node's key (see emit); fzf
     # shows the rows untouched, hides the key, and hands it to the bindings.
     # Enter opens the node in git-smartshow — the commit's change, or for the
-    # uncommitted node the working copy — and quitting that returns here. j/k
+    # uncommitted node the working copy — and quitting that returns here; d
+    # opens git-smartdiff on it instead — from the node to the working copy,
+    # uncommitted and untracked changes included — which for the uncommitted
+    # node is the working copy again. j/k
     # step between node header rows (listed by the child in heads), g/G jump
     # to the first and last, the rest of the keys follow FZF_LIST_KEYS /
     # FZF_PANE_KEYS, and the cursor starts on @. The stat pane is
@@ -2346,6 +2351,7 @@ function smartlog_interactive {
             $FZF_LIST_KEYS $FZF_PANE_KEYS
             "load:transform:awk -v n={n} 'n==0 && \$2==\"@\"{print \"pos(\" \$1+1 \")\"}' $qheads"
             "enter:transform:$key enter {1}"
+            "d:transform:$key diff {1}"
             "esc:transform:$key esc {1}"
             "/:show-input+unbind($SMARTLOG_LETTERS)+change-footer:$find_footer"
             "?:toggle-preview"
@@ -2372,10 +2378,13 @@ function smartlog_interactive {
 function smartlog_internal {
     # The modes -i's fzf calls back into, picked by GIT_SMARTLOG_MODE, each
     # given the row's key (a full sha, or "wdir"):
-    #   key      the fzf actions for enter/esc ($1, key $2): leave `/`
-    #            search if it's on, else open the row (enter) or quit (esc)
+    #   key      the fzf actions for enter/d/esc ($1, key $2): leave `/`
+    #            search if it's on, else open the row (enter), its diff
+    #            against the working copy (d — nothing on HEAD when the tree
+    #            is clean) or quit (esc)
     #   show     open the node in git-smartshow: the commit, or bare for the
     #            uncommitted node, which smartshow's default @ already is
+    #   diff     open git-smartdiff on the commit: from it to the working copy
     #   preview  the `?` pane: the commit's header and stat, or the
     #            uncommitted stat block
     local mode=$GIT_SMARTLOG_MODE
@@ -2388,6 +2397,14 @@ function smartlog_internal {
                 print -r -- "track-current+clear-query+search()+hide-input+rebind($SMARTLOG_LETTERS)+change-footer:$REPLY"
             elif [[ $action == esc ]]; then
                 print -r -- abort
+            elif [[ $action == diff && -n $k && $k != wdir ]]; then
+                # HEAD against a clean tree has nothing to show.
+                [[ $k == $(git rev-parse --verify --quiet HEAD 2>/dev/null) &&
+                   -z $(git status --porcelain 2>/dev/null) ]] && return 0
+                # Abbreviated, as smartdiff titles the view by its revision.
+                local short=
+                short=$(git rev-parse --short "$k" 2>/dev/null) || short=$k
+                print -r -- "execute:GIT_SMARTLOG_MODE=diff ${(qq)SELF} ${(qq)short}"
             elif [[ -n $k ]]; then
                 print -r -- "execute:GIT_SMARTLOG_MODE=show ${(qq)SELF} ${(qq)k}"
             fi
@@ -2399,6 +2416,10 @@ function smartlog_internal {
             else
                 smartshow_main "$1"
             fi
+            ;;
+        diff)
+            PROG=git-smartdiff
+            smartshow_main "$1"
             ;;
         preview)
             if [[ ${1:-} == wdir ]]; then
@@ -2709,7 +2730,7 @@ typeset -ga FZF_PANE_KEYS=(
 
 # The letter keys -i binds; its `/` search unbinds them so they type into the
 # query, and leaving search rebinds them.
-SMARTLOG_LETTERS='j,k,g,G,space,q,/,?'
+SMARTLOG_LETTERS='j,k,g,G,d,space,q,/,?'
 
 # The keys git-smartshow binds to letters and arrows; `/` search unbinds them
 # so they type into the query, and leaving search rebinds them.

@@ -602,6 +602,7 @@ Keys:
   ↑ / ↓               scroll the diff; page-down (or space) / page-up a page,
                       home / end to either end
   t                   switch between difftastic and git's own diff
+  enter               on a submodule, open git-smartlog -i inside it
   /                   find a path (enter or esc returns to the tree)
   ctrl-r              reload after the working tree changed
   q, esc              quit
@@ -642,6 +643,8 @@ Directories come first, then files in the stat block's group order. A chain of d
 
 The diff pane uses [difftastic](https://difftastic.wilfred.me.uk/) when `difft` is on your `PATH`, sized to the pane, so a wide terminal gets difft's side-by-side view. `t` switches to git's own colored diff and back. difft runs as git's external diff, so git still handles rename pairing, pathspecs and the untracked overlay either way.
 
+A submodule (`S`) has no diff worth showing — git renders a bump as two shas — so the pane shows its change list instead, the one `git smartlog -c` draws under the same `S` line: its own uncommitted changes, then the commits its pointer gained (`›`) or lost (`‹`), all of them. `enter` on its row opens `git smartlog -i` inside the submodule, and quitting that brings you back to the same row.
+
 Piped, `git smartshow` prints the diff once and exits — git's renderer unless `--tool difft` asks otherwise — so `git smartshow | less` and `git smartshow HEAD~2 > change.diff` behave like their git counterparts, untracked files included.
 
 ## git-smartdiff
@@ -672,6 +675,7 @@ Keys:
   ↑ / ↓               scroll the diff; page-down (or space) / page-up a page,
                       home / end to either end
   t                   switch between difftastic and git's own diff
+  enter               on a submodule, open git-smartlog -i inside it
   /                   find a path (enter or esc returns to the tree)
   ctrl-r              reload after the working tree changed
   q, esc              quit

@@ -106,6 +106,29 @@ expect "smartshow sends a pair to smartdiff" \
 expect "smartshow sends a range to smartdiff" \
     "$("$REPO/git-smartshow" HEAD..HEAD 2>&1)" '*compare two with git-smartdiff'
 
+# A submodule bump in smartshow's pane: git renders it as two shas, so the
+# pane lists the commits it gained instead, and enter on the submodule's row
+# opens git-smartlog -i inside it. Drives the fzf callbacks directly.
+new_repo sub-origin
+git commit -q --allow-empty -m first
+new_repo sub-bump
+git -c protocol.file.allow=always submodule add -q $WORK/sub-origin lib
+git commit -qm 'add lib'
+git -C lib commit -q --allow-empty -m second
+git -C lib commit -q --allow-empty -m third
+git add lib && git commit -qm 'bump lib'
+mkdir -p $WORK/sub-bump-state
+function smartshow_callback {
+    GIT_SMARTSHOW_MODE=$1 GIT_SMARTSHOW_STATE=$WORK/sub-bump-state \
+        GIT_SMARTSHOW_TITLE=t GIT_SMARTSHOW_PATHS= \
+        GIT_SMARTSHOW_SPEC=diff$'\x1f'$(git rev-parse HEAD~)$'\x1f'$(git rev-parse HEAD) \
+        "$REPO/git-smartshow" "${@[2,-1]}"
+}
+expect "smartshow's pane lists a bump's commits" \
+    "$(smartshow_callback preview lib '')" '    › third'
+expect "smartshow's enter on a submodule opens smartlog in it" \
+    "$(smartshow_callback key enter lib)" "execute:*git-smartlog* -C 'lib' -i </dev/tty >/dev/tty"
+
 print
 if (( failures )); then
     print -r -- "$failures of $checks regression checks failed"

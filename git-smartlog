@@ -2701,6 +2701,7 @@ To compare two points, use git-smartdiff.
   ↑ / ↓               scroll the diff; page-down (or space) / page-up a page,
                       home / end to either end
   t                   switch between difftastic and git's own diff
+  enter               on a submodule, open git-smartlog -i inside it
   /                   find a path (enter or esc returns to the tree)
   ctrl-r              reload after the working tree changed
   q, esc              quit
@@ -3019,20 +3020,90 @@ function smartshow_diff {
     # $1 (difft or git) at width $2 (empty: the renderer's own guess),
     # colored when $color_on. difft runs as git's external diff, so git
     # still owns rename detection, the untracked overlay and pathspecs.
+    #
+    # In the pane ($sub_lists set) a submodule bump is no use as git renders
+    # it — two shas, or one line of subjects — so each one leaves the diff
+    # and follows it as its change list (smartshow_submodule_list).
     local tool=$1 width=$2; shift 2
     local -a pspec=("$@")
     (( $# )) || pspec=($pathspec)
     local when=never
     (( color_on )) && when=always
+    local -a subs=() excl=()
+    local s=
+    if (( ${sub_lists:-0} )); then
+        smartshow_submodules $pspec
+        subs=("${reply[@]}")
+        for s in $subs; do excl+=(":(exclude,literal)${s%%$'\t'*}"); done
+    fi
+    # A selection of only submodules leaves this diff nothing; it prints none.
     if [[ $tool == difft ]]; then
         local -x DFT_COLOR=$when
         [[ -n $width ]] && local -x DFT_WIDTH=$width
         smartshow_git -c diff.external=difft diff --ext-diff --submodule=log \
-            $spec_args -- $pspec
+            $spec_args -- $pspec $excl
     else
         smartshow_git diff --no-ext-diff --color=$when --submodule=log \
-            $spec_args -- $pspec
+            $spec_args -- $pspec $excl
     fi
+    local -a rec=()
+    for s in $subs; do
+        rec=("${(@ps:\t:)s}")
+        smartshow_submodule_list $rec $(( ${#pspec} == 1 && ${pspec[(Ie)${rec[1]}]} ))
+    done
+}
+
+function smartshow_submodules {
+    # reply = "path<TAB>old sha<TAB>new sha" for each submodule pathspec $@
+    # moves or dirties: a gitlink on both sides. One added, removed or turned
+    # into a file stays in the diff, where git says so.
+    reply=()
+    local -a tok=("${(@0)$(smartshow_git diff --no-ext-diff --raw --no-abbrev -z \
+        $spec_args -- "$@" 2>/dev/null)}")
+    local -a hdr=()
+    local -i i=1
+    while (( i <= ${#tok} )) && [[ ${tok[i]} == :* ]]; do
+        hdr=(${=tok[i]})        # :oldmode newmode oldsha newsha STATUS
+        if [[ ${hdr[5]} == [RC]* ]]; then
+            (( i += 3 ))
+            continue
+        fi
+        [[ ${hdr[1]} == :160000 && ${hdr[2]} == 160000 ]] &&
+            reply+=("${tok[i+1]}"$'\t'"${hdr[3]}"$'\t'"${hdr[4]}")
+        (( i += 2 ))
+    done
+}
+
+function smartshow_submodule_list {
+    # Print submodule $1's entry the way git-smartlog -c draws it: an S line
+    # with the pointer's move from sha $2 to $3, then submodule_sublines — its
+    # own uncommitted changes in wdir mode, then the commits it gained (›) or
+    # lost (‹) — uncapped, as the pane scrolls. A dirty submodule's working
+    # side is all zeros, so its checkout's HEAD stands in. Enter on its row
+    # opens git-smartlog -i inside it (smartshow_key), which a last line
+    # says when $4 is 1: the row is the submodule's own, not a directory's.
+    local sub=$1 old=$2 new=$3 own=$4
+    local cyan= dim= reset=
+    (( color_on )) && { cyan=$'\e[36m'; dim=$'\e[2m'; reset=$'\e[0m'; }
+    local -i live=0
+    [[ -e $sub/.git ]] && live=1
+    if [[ $new == (0)## ]] && (( live )); then
+        new=$(git -C $sub rev-parse HEAD 2>/dev/null) || new=$old
+    fi
+    local move=${old[1,10]}
+    [[ $new != $old ]] && move+="..${new[1,10]}"
+    print -r -- "${cyan}S ${sub}${reset}  ${dim}${move}${reset}"
+    local commit=x
+    [[ $spec_mode == wdir ]] && commit=
+    local SUBLINE_CAP=0
+    submodule_sublines '' $color_on 0 "$commit" "$sub" $spec_args
+    if (( ${#reply} )); then
+        print -rl -- "${reply[@]}"
+    else
+        print -r -- "    ${dim}nothing to list: not checked out, or the commits aren't fetched${reset}"
+    fi
+    (( live && own )) && print -r -- $'\n'"${dim}enter: git-smartlog -i in ${sub}${reset}"
+    return 0
 }
 
 function smartshow_pspec {
@@ -3116,6 +3187,12 @@ function smartshow_key {
                 smartshow_relist "$key" "clear-query+search()+hide-input+rebind($letters)+"
             elif [[ $action == esc ]]; then
                 print -r -- abort
+            elif [[ $key != */ && -e $key/.git ]]; then
+                # A submodule's row: open git-smartlog -i inside it, given the
+                # terminal, since fzf's own stdin and stdout are the row list
+                # and /dev/null. Only a submodule's checkout holds a .git; a
+                # directory row's key ends in "/".
+                print -r -- "execute:${(qq)SELF} -C ${(qq)key} -i </dev/tty >/dev/tty"
             fi
             ;;
         load)
@@ -3200,6 +3277,7 @@ function smartshow_internal {
         preview)
             smartshow_pspec "$1" "$2"
             smartshow_tool
+            local -i sub_lists=1
             smartshow_diff $REPLY "${FZF_PREVIEW_COLUMNS:-}" $reply
             ;;
         key)

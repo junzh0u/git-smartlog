@@ -465,7 +465,8 @@ The view flags below are independent and combine freely.
                       in git-smartshow (the uncommitted node opens the
                       working copy), d compares it with the working copy
                       in git-smartdiff; / finds a row,
-                      ctrl-j/k moving between matches (needs fzf; off a
+                      ctrl-j/k moving between matches; q quits, Q also
+                      the views it was opened from (needs fzf; off a
                       terminal it prints the plain view, without the
                       implied -b -f, so it is safe in an alias)
   -c, --changes       show per-file changes under every commit in the current
@@ -508,7 +509,7 @@ less; GIT_PAGER=cat disables paging).
 
 ### Interactive
 
-`git smartlog -i` puts the same graph in [`fzf`](https://github.com/junegunn/fzf), with the cursor on `@`. `j`/`k` step from commit to commit, and the rest of vim's motions move through the graph too — `g`/`G` to the first and last commit, `ctrl-f`/`ctrl-b` a page, `ctrl-d`/`ctrl-u` half a page — while the arrow, page and `home`/`end` keys scroll the side pane instead, and `space` pages it down. [`git-smartshow`](#git-smartshow) splits its keys the same way. `enter` opens the selected commit in [`git-smartshow`](#git-smartshow) — its files as a tree, its diff beside them — and quitting that brings you back to the same row. On the uncommitted node, `enter` opens the working copy instead. `d` compares the selected commit with the working copy in [`git-smartdiff`](#git-smartdiff) instead — everything from there to the files on disk, uncommitted and untracked changes included. A side pane shows the selected commit's header and stat; `?` hides it and brings it back. `/` finds a row by its text (`enter` or `esc` goes back to the graph on the match), `ctrl-r` re-renders after you commit in another pane, and `q` quits.
+`git smartlog -i` puts the same graph in [`fzf`](https://github.com/junegunn/fzf), with the cursor on `@`. `j`/`k` step from commit to commit, and the rest of vim's motions move through the graph too — `g`/`G` to the first and last commit, `ctrl-f`/`ctrl-b` a page, `ctrl-d`/`ctrl-u` half a page — while the arrow, page and `home`/`end` keys scroll the side pane instead, and `space` pages it down. [`git-smartshow`](#git-smartshow) splits its keys the same way. `enter` opens the selected commit in [`git-smartshow`](#git-smartshow) — its files as a tree, its diff beside them — and quitting that brings you back to the same row. On the uncommitted node, `enter` opens the working copy instead. `d` compares the selected commit with the working copy in [`git-smartdiff`](#git-smartdiff) instead — everything from there to the files on disk, uncommitted and untracked changes included. A side pane shows the selected commit's header and stat; `?` hides it and brings it back. `/` finds a row by its text (`enter` or `esc` goes back to the graph on the match), `ctrl-r` re-renders after you commit in another pane, and `q` quits. `Q` quits too, along with every view this one was opened from — from a submodule's graph opened in `git-smartshow`, it goes straight back to the shell.
 
 It always browses every branch with the full history — `-i` implies `-b -f`, since a scrollable list has no reason to abbreviate — and the other view flags combine with it: `git smartlog -i -c` is the full branch forest with per-file bodies, browsable. The graph is the regular renderer's own output: each row carries a hidden key naming the commit it belongs to, so a wrapped subject, a `-c` file line or a connector below a commit all open that commit. With `-f` in effect, fzf reads the streamed history to the end rather than lazily as you scroll. When stdout isn't a terminal, `-i` does nothing — the implied `-b -f` included — and the plain view prints, so it's safe to bake into an alias (`git config --global alias.sl 'smartlog -i'`) and still pipe `git sl`.
 
@@ -606,6 +607,7 @@ Keys:
   /                   find a path (enter or esc returns to the tree)
   ctrl-r              reload after the working tree changed
   q, esc              quit
+  Q                   quit, and every view this one was opened from
 
 Options:
       --tool TOOL     diff renderer: auto (default — difft when installed), difft,
@@ -679,6 +681,7 @@ Keys:
   /                   find a path (enter or esc returns to the tree)
   ctrl-r              reload after the working tree changed
   q, esc              quit
+  Q                   quit, and every view this one was opened from
 
 Options:
       --tool TOOL     diff renderer: auto (default — difft when installed), difft,

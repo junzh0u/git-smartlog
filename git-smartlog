@@ -419,7 +419,8 @@ The view flags below are independent and combine freely.
                       in git-smartshow (the uncommitted node opens the
                       working copy), d compares it with the working copy
                       in git-smartdiff; / finds a row,
-                      ctrl-j/k moving between matches (needs fzf; off a
+                      ctrl-j/k moving between matches; q quits, Q also
+                      the views it was opened from (needs fzf; off a
                       terminal it prints the plain view, without the
                       implied -b -f, so it is safe in an alias)
   -c, --changes       show per-file changes under every commit in the current
@@ -2324,6 +2325,7 @@ function smartlog_interactive {
     trap "rm -rf -- ${(q)sdir}; exit 129" HUP
     trap "rm -rf -- ${(q)sdir}; exit 143" TERM
     {
+        quit_all_init $sdir/quit
         local heads=$sdir/heads qheads=${(qq)sdir}/heads
         local -i pane_pct=50
         local src="GIT_SMARTLOG_PANE_PCT=$pane_pct GIT_SMARTLOG_ROWKEYS=$qheads ${(qq)SELF}${child:+ ${(j: :)${(@qq)child}}}"
@@ -2350,13 +2352,13 @@ function smartlog_interactive {
             "G:transform:awk 'END{if(NR)print \"pos(\" \$1+1 \")\"}' $qheads"
             $FZF_LIST_KEYS $FZF_PANE_KEYS
             "load:transform:awk -v n={n} 'n==0 && \$2==\"@\"{print \"pos(\" \$1+1 \")\"}' $qheads"
-            "enter:transform:$key enter {1}"
-            "d:transform:$key diff {1}"
+            "enter:transform(GIT_SMARTLOG_MODE=key \"\$GIT_SMARTLOG_SELF\" enter {1})+$QUIT_CHECK"
+            "d:transform(GIT_SMARTLOG_MODE=key \"\$GIT_SMARTLOG_SELF\" diff {1})+$QUIT_CHECK"
             "esc:transform:$key esc {1}"
             "/:show-input+unbind($SMARTLOG_LETTERS)+change-footer:$find_footer"
             "?:toggle-preview"
             "ctrl-r:reload:$src"
-            'q:abort'
+            'q:abort' $QUIT_ALL
         )
         local -a fzf_args=(
             --ansi --no-sort --layout=reverse --no-input --no-multi
@@ -2705,6 +2707,7 @@ To compare two points, use git-smartdiff.
   /                   find a path (enter or esc returns to the tree)
   ctrl-r              reload after the working tree changed
   q, esc              quit
+  Q                   quit, and every view this one was opened from
 
 Options:
       --tool TOOL     diff renderer: auto (default — difft when installed), difft,
@@ -2736,11 +2739,28 @@ typeset -ga FZF_PANE_KEYS=(
 
 # The letter keys -i binds; its `/` search unbinds them so they type into the
 # query, and leaving search rebinds them.
-SMARTLOG_LETTERS='j,k,g,G,d,space,q,/,?'
+SMARTLOG_LETTERS='j,k,g,G,d,space,q,Q,/,?'
 
 # The keys git-smartshow binds to letters and arrows; `/` search unbinds them
 # so they type into the query, and leaving search rebinds them.
-SMARTSHOW_LETTERS='j,k,g,G,space,h,l,left,right,t,q,/'
+SMARTSHOW_LETTERS='j,k,g,G,space,h,l,left,right,t,q,Q,/'
+
+# q quits one view; Q quits every view it was opened from as well — -i's
+# graph, the smartshow it opened, the submodule's graph that opened in turn.
+# Each runs the next through fzf's execute, which ignores how it ended, so
+# Q leaves a marker the views above check whenever an execute returns
+# (QUIT_CHECK) to abort in turn. The outermost view names the marker, a
+# file in its own state directory (quit_all_init), so it goes with it.
+QUIT_ALL='Q:execute-silent(: >"$GIT_SMARTLOG_QUIT")+abort'
+QUIT_CHECK='transform:if [ -e "$GIT_SMARTLOG_QUIT" ]; then echo abort; fi'
+
+function quit_all_init {
+    # Name the Q marker $1, unless an outer view already did. Also export
+    # SELF, which the binds chaining QUIT_CHECK behind an execute name by
+    # variable: fzf would end their bracketed form at a ")" in the path.
+    [[ -n ${GIT_SMARTLOG_QUIT:-} ]] || export GIT_SMARTLOG_QUIT=$1
+    export GIT_SMARTLOG_SELF=$SELF
+}
 
 # The sidebar's share of the terminal, and its floor: 36 columns leave the
 # 30-column key legend (smartshow_footer) whole beside fzf's gutter and the
@@ -3432,6 +3452,7 @@ function smartshow_main {
             return 0
         fi
 
+        quit_all_init $sdir/quit
         export GIT_SMARTSHOW_STATE=$sdir GIT_SMARTSHOW_TITLE=$title
         local -a spec=($spec_mode $spec_args)
         export GIT_SMARTSHOW_SPEC=${(pj:\x1f:)spec}
@@ -3451,12 +3472,12 @@ function smartshow_main {
             "l:transform:$KEY l {1}" "right:transform:$KEY l {1}"
             "t:transform:$KEY t {1}"
             "/:show-input+unbind($SMARTSHOW_LETTERS)+reload($LIST flat)"
-            "enter:transform:$KEY enter {1}"
+            "enter:transform(GIT_SMARTSHOW_MODE=key \"\$GIT_SMARTLOG_SELF\" enter {1})+$QUIT_CHECK"
             "esc:transform:$KEY esc {1}"
             "ctrl-r:transform:$KEY reload {1}"
             "load:transform:$KEY load"
             "resize:transform:$KEY resize"
-            'q:abort'
+            'q:abort' $QUIT_ALL
         )
         smartshow_layout
         local -a fzf_args=(
